@@ -1,0 +1,627 @@
+---
+title: "Chemical Pattern Analysis"
+author: "Elise Hickman"
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_depth: 6
+    number_sections: true
+---
+
+# Script Summary
+
+Script within this file was used to:
+
++ Asses chemical functional use categories (Figure 2, Table S4)
++ Perform hierarchical clustering and visualization of chemical concentrations (Figures 3A, S4, S5)
++ Perform chemical correlation analysis (Figure 3B)
+
+# Set up workspace
+
+```{r message = FALSE, warning = FALSE}
+# Clear global environment
+rm(list=ls())
+
+# Load packages
+library(tidyverse) # for data organization and manipulation
+library(janitor) # for data cleaning
+library(openxlsx) # for reading in and writing out files
+library(DT) # for displaying tables
+library(scales) # for graphing
+library(vegan) # for hierarchical clustering
+library(cluster) # for hierarchical clustering
+library(factoextra) # for hierarchical clustering
+library(patchwork) # for graphing
+library(pheatmap) # for heatmap
+library(rcartocolor) # for colors
+library(viridis) # for colors
+library(corrplot) # for correlation analysis
+select <- dplyr::select
+
+# Set theme
+theme_set(theme_bw())
+
+# Set working directory
+setwd("/Users/ehickman/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects/2023/BEE_Wristband_Project/4_Analyses/1_CurrentAnalyses/2_ChemicalPatternAnalysis")
+```
+
+# Import data 
+
+This script requires cleaned, imputed chemical data (found in 1_DataPreprocess/1_ChemicalData/4_OutputData, copied to this directory 1_ChemicalPatternAnalysis/1_InputData). The minimum detection limit data will also be used to annotate heatmaps. 
+
+```{r}
+# Cleaned chemical data
+wb <- read.xlsx("1_InputData/ChemicalData_Filtered_Imp_TW.xlsx")
+
+# MDL data (cleaned the same way as in the chemical data preprocessing script)
+chemical_key <- read.xlsx("1_InputData/Minimum Detection Levels.xlsx", colNames = FALSE) %>%
+  t() %>% as.data.frame() %>%
+  remove_rownames() %>% # R had assigned unneeded row names
+  row_to_names(1) %>% # Add column names
+  na.omit() %>% # Some of the rows were completely empty
+  dplyr::rename("chemical" = "Name", "mdl" = "MDL (ng/g)", "class_chemical" = "Variable Name", "class" = "Class") %>%
+  select(-mdl)
+
+# DTSXIDs
+cas_dtxs <- read.xlsx("1_InputData/CAS_DTXSID.xlsx") %>%
+  clean_names() %>%
+  mutate(chemical = recode(chemical, "pyraclostrobin" = "Pyraclostrobin")) # recode these two chemical names so they match the chemical data
+
+# Chemical functional use annotations
+chem_funct_anno <- read.xlsx("1_InputData/Chems_with_Annotation.xlsx")
+```
+
+We will also prepare a color key for heatmaps below.
+
+```{r}
+hm_chemical_key <- chemical_key %>% 
+  remove_rownames() %>% 
+  column_to_rownames("class_chemical") %>%
+  select(class) %>% 
+  rename("Chemical Class" = "class")
+
+heatmap_chemical_class_colors = list("Chemical Class" = c(BDE = "#88CCEE",
+                                               BFR = "#CC6677",
+                                               OPE = "#DDCC77",
+                                               PAH = "#117733",
+                                               PCB = "#332288",
+                                               Pest = "#AA4499",
+                                               Phthal = "#44AA99",
+                                               alkylOPE = "#999933"))
+```
+
+
+# Chemical functional use analysis
+
+Remove rows with NAs.
+```{r}
+chem_funct_anno <- na.omit(chem_funct_anno)
+```
+
+Count how many chemicals there were per functional use category and clean data frame to prepare for graphing.
+```{r}
+chem_funct_anno_summary <- chem_funct_anno %>%
+  summarise(across(flame_retardant:dye, sum)) %>%
+  t() %>% as.data.frame() %>%
+  rownames_to_column("functional_use") %>%
+  rename("count" = "V1")
+
+chem_funct_anno_summary_cleaned <- chem_funct_anno_summary %>%
+  mutate(functional_use = gsub("_", " ", functional_use)) %>%
+  mutate(functional_use = str_to_title(functional_use)) %>%
+  mutate(functional_use = recode(functional_use, "Uv Absorber" = "UV Absorber", "Softener Conditioner" = "Softener/Conditioner"))
+```
+
+Make graph of functional use categories.
+```{r}
+funct_summary <- ggplot(chem_funct_anno_summary_cleaned, aes(x = reorder(functional_use, -count), y = count, fill = count)) +
+  geom_col(color = "black", size = 0.5) +
+  labs(x = "Functional Use Category", y = "Number of Chemicals") +
+  scale_y_continuous(breaks = breaks_pretty(), limits = c(0, 25)) +
+  scale_x_discrete(expand = c(0.05, 0.05)) +
+  scale_fill_gradient(low = "gray85", high = "gray40") +
+  theme(axis.ticks.x = element_blank(),
+        axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
+        axis.title.x = element_text(size = 14, margin = margin(t = 10, r = 0, b = 0, l = 0)),
+        axis.title.y = element_text(size = 14, margin = margin(t = 0, r = 10, b = 0, l = 0)),
+        plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+        axis.text = element_text(color = "black"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        legend.position = "none")
+  
+pdf(file = "2_OutputFigs/Functional_Annotations_Count.pdf",
+    width = 10,
+    height = 5)
+funct_summary
+invisible(dev.off())
+
+funct_summary
+```
+
+Make a heatmap of functional use categories:
+```{r}
+hm_chemical_key_funct <- chemical_key %>% 
+  remove_rownames() %>% 
+  column_to_rownames("chemical") %>%
+  select(class) %>% 
+  rename("Chemical Class" = "class")
+
+heatmap_chemical_class_colors_funct = list("Chemical Class" = c(BDE = "#88CCEE",
+                                               BFR = "#CC6677",
+                                               OPE = "#DDCC77",
+                                               PAH = "#117733",
+                                               PCB = "#332288",
+                                               Pest = "#AA4499",
+                                               Phthal = "#44AA99",
+                                               alkylOPE = "#999933"))
+
+# Names of functional use categories with 5 or more chemicals present
+cats_to_keep <- chem_funct_anno_summary %>%
+  filter(count > 4) %>%
+  pull(functional_use)
+
+# Keep only functional use categories with 5 or more chemicals present and remove chemicals that do not map to any of these categories. This removed 3 chemicals that did not map to the top 5 categories.
+chem_funct_anno_filtered <- chem_funct_anno %>%
+  select(c(chemical, all_of(cats_to_keep))) %>%
+  filter(rowSums(across(where(is.numeric)))!= 0) %>%
+  column_to_rownames("chemical") %>%
+  rename_with(.cols = c(flame_retardant:softener_conditioner), .fn = function(.x) {gsub("_", " ", .x)}) %>%
+  rename_with(.cols = c('flame retardant':'softener conditioner'), .fn = function(.x) {str_to_title(.x)}) %>%
+  rename("Softener/Conditioner" = "Softener Conditioner") %>%
+  select(order(-colSums(.)))
+
+# Make heatmap
+funct_use_hm <- pheatmap(as.matrix(chem_funct_anno_filtered),
+                         cluster_cols = FALSE, 
+                         fontsize_col = 12,
+                         border_color = "black",
+                         angle_col = 45,
+                         color = c("gray85", "mediumpurple3"),
+                         annotation_row = hm_chemical_key_funct,
+                         annotation_colors = heatmap_chemical_class_colors_funct,
+                         annotation_names_row = FALSE)
+
+pdf(file = "2_OutputFigs/Functional_Annotations_Heatmap.pdf",
+    width = 10,
+    height = 9)
+funct_use_hm
+invisible(dev.off())
+
+funct_use_hm
+```
+
+How many chemicals were in multiple functional use categories?
+```{r}
+cat_per_chem <- data.frame(number_of_cats = rowSums(chem_funct_anno_filtered)) %>%
+  group_by(number_of_cats) %>%
+  summarise(n = n())
+```
+
+
+# Hierarchical clustering
+
+## Non-standardized data
+
+First, prepare the data for clustering by log2 transforming. We will also transpose the data frame so that variable we want to cluster on (chemical exposure) is in rows and subjects are in columns. Note: we will rename columns so that there isn't an X in front of each subject ID number.
+```{r}
+# Write pseudolog function
+pseudolog <- function(x) log2(x+1)
+
+# Apply function to data
+wb_log2_t <- wb %>%
+  column_to_rownames("S_ID") %>%
+  mutate(across(where(is.numeric), pseudolog)) %>%
+  t() %>% 
+  data.frame() %>% 
+  rename_with(~ str_replace(., "X", "S_"))
+```
+
+Select number of clusters:
+```{r}
+# Calculate distance matrix
+chem_dist <- vegdist(wb_log2_t, method = "euclidean")
+
+# Visualizations for optimal number of clusters. k.max must be at most, one less than the smaller of the 2 dimensions of the data frame or it will bug.
+
+# WSS
+wss <- fviz_nbclust(wb_log2_t, method = "wss", diss = chem_dist, FUNcluster = hcut, hc_func="diana", k.max = 9) +
+  ggtitle("Within Sum of Squares") +
+  labs(subtitle = "(Elbow Method)",
+       x = "Number of Clusters") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 13),
+        axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 13))
+
+# Silhouette
+silhouette <- fviz_nbclust(wb_log2_t, method = "silhouette", diss = chem_dist, FUNcluster = hcut, hc_func="diana", k.max = 9) +
+  ggtitle("Average Silhouette Width") +
+  labs(subtitle = "(Silhouette Method)",
+       x = "Number of Clusters",
+       y = "Average Silhouette Width") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 13),
+        axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 13))
+
+# 2 or 4 clusters makes the most sense based on these graphs
+log2data_clusterselect <- wss + silhouette + 
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(face = "bold", size = 18))
+
+pdf(file = "2_OutputFigs/Hclust_K_Select.pdf",
+    width = 11,
+    height = 5)
+
+log2data_clusterselect
+
+invisible(dev.off())
+
+log2data_clusterselect
+```
+Plot heatmap of clusters:
+```{r}
+# Run clustering algorithm
+chem_clusters <- diana(chem_dist, diss=TRUE)
+
+# Select 4 clusters of chemicals
+ncut <- 4
+cluster_assignments <- cutree(chem_clusters, k = ncut)
+
+# Quantify number of chemicals in each cluster
+k_chems <- table(cluster_assignments)
+
+# Add in cluster assignment to data frame and arrange the data frame by cluster number
+wb_log2_t$cluster <- cluster_assignments
+wb_log2_t <- wb_log2_t %>% arrange(cluster)
+
+# Add in index column and find where to add breaks in heat map to separate clusters
+wb_log2_t$index <- 1:nrow(wb_log2_t)
+hm_breaks <- wb_log2_t %>% group_by(cluster) %>% summarise(m=max(index))
+
+# Data to plot in heat map
+hm_data <- wb_log2_t %>% select(-c("cluster","index"))
+
+# Make heat map 
+hclust_heatmap <- pheatmap(hm_data,
+         annotation_row = hm_chemical_key,
+         annotation_colors = heatmap_chemical_class_colors,
+         annotation_names_row = FALSE,
+         scale = 'column',
+         cluster_rows = FALSE,
+         cluster_cols = TRUE,
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         gaps_row = hm_breaks$m,
+         color = rocket(100))
+
+pdf(file = "2_OutputFigs/Heatmap_Log2Data_ColScale_4Clust.pdf",
+    width = 7,
+    height = 5)
+hclust_heatmap
+invisible(dev.off())
+
+hclust_heatmap
+```
+
+## Standardized data (within-chemical scaled)
+
+Prepare data. This code scales the data within each chemical, such that within each chemical, the participant with the highest exposure is assigned the highest number, and the participant with the lowest exposure is assigned the lowest number.   
+
+```{r}
+wb_log2_sc_t <- wb %>%
+  column_to_rownames("S_ID") %>% # Add subjects to row names to preserve IDs
+  mutate(across(where(is.numeric), pseudolog)) %>%
+  scale() %>% # Scale values
+  t() %>% data.frame() %>%
+  rename_with(~ str_replace(., "X", "S_"))
+```
+
+Select number of clusters:
+```{r}
+# Calculate distance matrix
+chem_dist <- vegdist(wb_log2_sc_t, method = "euclidean")
+
+# Visualizations for optimal number of clusters. k.max must be at most, one less than the smaller of the 2 dimensions of the data frame or it will bug.
+
+# WSS
+wss <- fviz_nbclust(wb_log2_sc_t, method = "wss", diss = chem_dist, FUNcluster = hcut, hc_func="diana", k.max = 9) +
+  ggtitle("Within Sum of Squares") +
+  labs(subtitle = "(Elbow Method)",
+       x = "Number of Clusters") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 13),
+        axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 13))
+
+# Silhouette
+silhouette <- fviz_nbclust(wb_log2_sc_t, method = "silhouette", diss = chem_dist, FUNcluster = hcut, hc_func="diana", k.max = 9) +
+  ggtitle("Average Silhouette Width") +
+  labs(subtitle = "(Silhouette Method)",
+       x = "Number of Clusters",
+       y = "Average Silhouette Width") +
+  theme(plot.title = element_text(hjust = 0.5),
+        plot.subtitle = element_text(hjust = 0.5),
+        axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 13),
+        axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 13))
+
+# 4 clusters makes the most sense based on these graphs
+log2data_scaled_clusterselect <- wss + silhouette +
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(face = "bold", size = 18))
+
+pdf(file = "2_OutputFigs/Hclust_K_Select_WithinChemScaled.pdf",
+    width = 11,
+    height = 5)
+
+log2data_scaled_clusterselect
+
+invisible(dev.off())
+
+log2data_scaled_clusterselect
+```
+
+Run clustering:
+```{r}
+# Run clustering algorithm
+chem_clusters_sc <- diana(chem_dist, diss=TRUE)
+
+# Select 4 clusters of chemicals
+ncut <- 4
+cluster_assignments_sc <- cutree(chem_clusters_sc, k = ncut)
+
+# Quantify number of chemicals in each cluster
+k_chems_sc <- table(cluster_assignments_sc)
+
+# Add in cluster assignment to data frame and arrange the data frame by cluster number
+wb_log2_sc_t$cluster <- cluster_assignments_sc
+wb_log2_sc_t <- wb_log2_sc_t %>% arrange(cluster)
+
+# Add in index column and find where to add breaks in heat map to separate clusters
+wb_log2_sc_t$index <- 1:nrow(wb_log2_sc_t)
+hm_breaks <- wb_log2_sc_t %>% group_by(cluster) %>% summarise(m=max(index))
+
+# Data to plot in heat map
+hm_data_sc_t <- wb_log2_sc_t %>% select(-c("cluster","index"))
+
+# Extract cluster assignments
+clust_assign_df <- wb_log2_sc_t %>%
+  rownames_to_column("class_chemical") %>%
+  select(c(class_chemical, cluster))
+
+# Add cluster assignments to chemical key
+hm_chemical_key <- hm_chemical_key %>% 
+  rownames_to_column("class_chemical") %>%
+  left_join(clust_assign_df, by = "class_chemical") %>%
+  column_to_rownames("class_chemical") %>%
+  rename("Cluster" = "cluster") %>%
+  mutate(Cluster = as.character(Cluster))
+
+# Add group colors to chemical key
+heatmap_chemical_class_colors = list("Chemical Class" = c(BDE = "#88CCEE",
+                                               BFR = "#CC6677",
+                                               OPE = "#DDCC77",
+                                               PAH = "#117733",
+                                               PCB = "#332288",
+                                               Pest = "#AA4499",
+                                               Phthal = "#44AA99",
+                                               alkylOPE = "#999933"), 
+                                     "Cluster" = c(`1` = "gray85",
+                                                   `2` = "gray70",
+                                                   `3` = "gray55",
+                                                   `4` = "gray40"))
+
+
+# Make heat map
+hclust_heatmap_inputscaled_chemical <- pheatmap(hm_data_sc_t,
+         annotation_row = hm_chemical_key,
+         annotation_colors = heatmap_chemical_class_colors,
+         annotation_names_row = FALSE,
+         scale = 'column', 
+         cluster_rows = FALSE,
+         cluster_cols = TRUE,
+         show_rownames = FALSE,
+         show_colnames = FALSE,
+         gaps_row = hm_breaks$m,
+         color = rocket(100))
+
+pdf(file = "2_OutputFigs/Heatmap_Log2DataWithinChemical_4Clust.pdf",
+    width = 7,
+    height = 5)
+hclust_heatmap_inputscaled_chemical
+invisible(dev.off())
+
+hclust_heatmap_inputscaled_chemical
+```
+
+# Correlation analysis
+
+First, prepare scaled data frame that is not transposed:
+```{r}
+wb_log2_sc <- wb %>%
+  column_to_rownames("S_ID") %>% # Add subjects to row names to preserve IDs
+  mutate(across(where(is.numeric), pseudolog)) %>%
+  scale() %>% # Scale values
+  data.frame()
+```
+
+And modify the default cor.mtest function typically used in correlation analysis to use Spearman correlation (since our data are non-normally distributed):
+```{r}
+# To add significance to correlation analysis, run this function
+cor.mtest.spearman <- function(mat, ...) {
+  mat <- as.matrix(mat)
+  n <- ncol(mat)
+  p.mat<- matrix(NA, n, n)
+  diag(p.mat) <- 0
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      tmp <- cor.test(mat[, i], mat[, j], method = "spearman", exact = FALSE, ...)
+      p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+    }
+  }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+```
+
+
+## All chemicals together
+
+```{r}
+# Calculate correlations and p-values
+data_corr <- cor(as.matrix(wb_log2_sc), method = "spearman")
+p.mat <- cor.mtest.spearman(as.matrix(wb_log2_sc))
+
+# Extract upper triangle so that only unique pairs are included
+corrsummary <- data.frame(var1 = rownames(data_corr)[row(data_corr)[upper.tri(data_corr)]], 
+           var2 = colnames(data_corr)[col(data_corr)[upper.tri(data_corr)]], 
+           corr = data_corr[upper.tri(data_corr)]) %>% 
+  unite(var1_var2, var1, var2, sep = "_", remove = FALSE)
+
+psummary <- data.frame(var1 = rownames(p.mat)[row(p.mat)[upper.tri(p.mat)]], 
+           var2 = colnames(p.mat)[col(p.mat)[upper.tri(p.mat)]], 
+           pval = p.mat[upper.tri(p.mat)]) %>% 
+  unite(var1_var2, var1, var2, sep = "_", remove = TRUE)
+
+# Merge data frames and calculate average R and p-value (to be used in graph below)
+corrpval_all_spearman_sc <- right_join(corrsummary, psummary, by = "var1_var2") %>%
+   mutate(corr_abs = abs(corr))
+
+# Calculate average R, p-value, and percentage of correlations that are significant
+correlation_summary_all <- data.frame(corr_avg = mean(corrpval_all_spearman_sc$corr_abs), 
+                                      p_avg = mean(corrpval_all_spearman_sc$pval), 
+                                      sig_count = nrow(corrpval_all_spearman_sc %>% filter(abs(corr) > 0.6 & pval < 0.05)))
+    
+correlation_summary_all <- correlation_summary_all %>%
+      mutate(sig_perc = sig_count/nrow(corrpval_all_spearman_sc)*100)
+
+correlation_summary_all
+```
+
+
+## By hierarchical cluster
+
+First, split the data frame into a list by cluster:
+```{r}
+# Extract cluster assignments
+clust_assign_df <- wb_log2_sc_t %>%
+  rownames_to_column("class_chemical") %>%
+  select(c(class_chemical, cluster))
+
+# Add cluster assignments to data frame and make data frame into a list
+hclust_df_list <- wb_log2_sc %>%
+  t() %>% as.data.frame() %>%
+  rownames_to_column("class_chemical") %>%
+  left_join(clust_assign_df, by = "class_chemical") %>%
+  split(f = as.factor(.$cluster))
+```
+
+Then, clean each of the data frames:
+```{r}
+# Function for cleaning data frame to prepare for correlation calculation
+df_list_cleaning <- function(listed_df) {
+    listed_df %>% 
+    remove_rownames() %>%
+      column_to_rownames("class_chemical") %>%
+      t()
+}
+
+# Clean each data frame to prepare for correlation calculations 
+hclust_df_list <- lapply(hclust_df_list, df_list_cleaning)
+```
+
+And compute correlations from each data frame:
+```{r}
+# Compute correlations from each data frame
+hclust_correlations <- lapply(hclust_df_list, function(x) {
+    
+    # Compute correlations
+    data_corr <- cor(x, method = "spearman")
+    
+    # Compute p-values
+    p.mat <- cor.mtest.spearman(x)
+    
+    # Summarize R values
+    corrsummary <- data.frame(var1 = rownames(data_corr)[row(data_corr)[upper.tri(data_corr)]], 
+           var2 = colnames(data_corr)[col(data_corr)[upper.tri(data_corr)]], 
+           corr = data_corr[upper.tri(data_corr)]) %>% 
+      unite(var1_var2, var1, var2, sep = "_", remove = FALSE)
+    
+    # Summarize p values
+    psummary <- data.frame(var1 = rownames(p.mat)[row(p.mat)[upper.tri(p.mat)]], 
+           var2 = colnames(p.mat)[col(p.mat)[upper.tri(p.mat)]], 
+           pval = p.mat[upper.tri(p.mat)]) %>% 
+      unite(var1_var2, var1, var2, sep = "_", remove = TRUE)
+    
+    # Merge data frames 
+    all_correlations <- right_join(corrsummary, psummary, by = "var1_var2") %>%
+      mutate(corr_abs = abs(corr))
+    
+    # Calculate average correlation and p-value per group, summarize in data table
+    correlation_summary <- data.frame(corr_avg = mean(all_correlations$corr_abs), 
+                                      p_avg = mean(all_correlations$pval), 
+                                      sig_count = nrow(all_correlations %>% filter(abs(corr) > 0.6 & pval < 0.05)))
+    
+    correlation_summary <- correlation_summary %>%
+      mutate(sig_perc = sig_count/nrow(all_correlations)*100)
+    
+    # Make a list for output
+    # list(all_correlations, correlation_summary)
+    
+    return(correlation_summary)
+  })
+
+# Unlist data frame for final summary data frame
+hclust_correlations <- Map(cbind, hclust_correlations, cluster = names(hclust_correlations))
+hclust_correlations <- do.call(rbind, hclust_correlations) 
+```
+
+## Visualizing results
+
+```{r}
+# Make data frame with lines to plot from correlation between all chemicals analysis
+correlations_ref_spearman <- correlation_summary_all %>%
+  select(-sig_count) %>%
+  pivot_longer(corr_avg:sig_perc, values_to = "value_ref", names_to = "variable")
+
+# Prepare by cluster data for graphing
+hclust_correlations_forgraphing <- hclust_correlations %>%
+  select(-sig_count) %>%
+  pivot_longer(corr_avg:sig_perc, values_to = "value", names_to = "variable")
+
+# Combine data frames
+corr_performance_forgraphing <- hclust_correlations_forgraphing %>%
+  left_join(correlations_ref_spearman, by = "variable") %>%
+  mutate(value_ref = as.numeric(value_ref)) %>%
+  mutate(value = as.numeric(value))
+
+# Create labels
+corr_performance_forgraphing$variable <- factor(corr_performance_forgraphing$variable, levels = c("corr_avg", "p_avg", "sig_perc"),
+                                   labels = c("Avg |R|", "Avg P-Value", "% Corr Signif"))
+
+# Make graph
+hclust_spearman_corr_performance <- ggplot() +
+  geom_col(corr_performance_forgraphing, mapping = aes(x = cluster, y = value, fill = cluster), color = "black") +
+  scale_fill_manual(values = c("gray85","gray70", "gray55","gray40")) +
+  geom_hline(corr_performance_forgraphing, mapping = aes(yintercept = value_ref), color = "red4", linetype = "dashed", linewidth = 0.75) +
+  facet_wrap(~variable, scales = "free_y", nrow = 3) +
+  labs(x = "Cluster") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2))) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 12),
+        axis.text.x = element_text(size = 12),
+        legend.position = "none",
+        strip.background = element_rect(fill ="gray25"),
+        strip.text = element_text(color = "white", size = 12))
+
+pdf(hclust_spearman_corr_performance, file = "2_OutputFigs/Hclust_Corr_Performance.pdf",
+    height = 6,
+    width = 3)
+hclust_spearman_corr_performance
+invisible(dev.off())
+
+hclust_spearman_corr_performance
+```
+

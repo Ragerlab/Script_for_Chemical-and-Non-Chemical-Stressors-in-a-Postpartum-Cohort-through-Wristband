@@ -1,0 +1,69 @@
+﻿DTXSID,PREFERRED NAME,CASRN,INCHIKEY,IUPAC NAME,SMILES,INCHI STRING,MOLECULAR FORMULA,AVERAGE MASS,MONOISOTOPIC MASS,# of SOURCES,# OF PUBMED ARTICLES,PUBCHEM DATA SOURCES,CPDAT COUNT,QC Level,# ToxCast Active,% ToxCast Active,Total Assays
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID001009528,"2-Propenoic acid, 2-methyl-, dodecyl ester, polymer with methyl 2-methyl-2-propenoate and tetradecyl 2-methyl-2-propenoate",68171-50-6,,,,,,, ,46,,,26,5, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID0020868,Dichloromethane,75-09-2,YMWUJEATGCHHMB-UHFFFAOYSA-N,Dichloromethane,ClCCl,"InChI=1S/CH2Cl2/c2-1-3/h1H2
+",CH2Cl2,84.93,83.953356,385,1755,390,3207,1,1/235,0,235
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID0021381,"1,1,1-Trichloroethane",71-55-6,UOCLXMDMGBRAIB-UHFFFAOYSA-N,"1,1,1-Trichloroethane",CC(Cl)(Cl)Cl,"InChI=1S/C2H3Cl3/c1-2(3,4)5/h1H3
+",C2H3Cl3,133.4,131.930033,319,385,112,3053,1,1/235,0,235
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID0021383,Trichloroethylene,79-01-6,XSTXAVWGXDQKEL-UHFFFAOYSA-N,"1,1,2-Trichloroethene",ClC=C(Cl)Cl,"InChI=1S/C2HCl3/c3-1-2(4)5/h1H
+",C2HCl3,131.38,129.914383,360,4105,181,413,1,3/235,1,235
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID0023872,Ammonia,7664-41-7,QGZKDVFQNNGYKY-UHFFFAOYSA-N,Ammonia,N,"InChI=1S/H3N/h1H3
+",H3N,17.031,17.026549,301,23886,433,1201,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID0027983,Dipropylene glycol monomethyl ether,34590-94-8,,,"C*.C*.COCCOCCO |lp:5:2,8:2,11:2,m:1:6.7,3:9.10|",,C7H16O3,148.202,148.109944,269,18,,1461,1,24/941,3,941
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID0028246,"Solvent naphtha, petroleum, light aliph.",64742-89-8,,,,,,, ,162,,,5419,2, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID0051233,Mineral spirits,64475-85-0,,,,,,, ,107,,,3047,2, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID1024097,2-Butoxyethanol,111-76-2,POAOYUHQDCAZBD-UHFFFAOYSA-N,2-Butoxyethan-1-ol,CCCCOCCO,"InChI=1S/C6H14O2/c1-2-3-5-8-6-4-7/h7H,2-6H2,1H3
+",C6H14O2,118.176,118.099380,410,169,163,6931,1,7/855,1,855
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID1026031,Sodium dodecyl sulfate,151-21-3,DBMJMQXJHONAFJ-UHFFFAOYSA-M,Sodium dodecyl sulfate,[Na+].CCCCCCCCCCCCOS([O-])(=O)=O,"InChI=1S/C12H26O4S.Na/c1-2-3-4-5-6-7-8-9-10-11-12-16-17(13,14)15;/h2-12H2,1H3,(H,13,14,15);/q;+1/p-1
+",C12H25NaO4S,288.38,288.137125,345,11781,172,944,1,213/1004,21,1004
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID1027263,Pentyl acetate,628-63-7,PGMYKACGEOXYJE-UHFFFAOYSA-N,Pentyl acetate,CCCCCOC(C)=O,"InChI=1S/C7H14O2/c1-3-4-5-6-9-7(2)8/h3-6H2,1-2H3
+",C7H14O2,130.187,130.099380,259,120,118,1389,1,39/859,5,859
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID1027924,Diisodecyl hexanedioate,27178-16-1,,,"C*.C*.CCCCCCCCCOC(=O)CCCCC(=O)OCCCCCCCCC |lp:13:2,15:2,21:2,22:2,m:1:23.24.25.26.27.28.29.30,3:12.11.10.9.8.7.6.5|",,C26H50O4,426.682,426.370910,110,,,40,1,19/875,2,875
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID2021446,Xylenes,1330-20-7,,,,,,, ,369,3561,,21788,1,4/235,2,235
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID2021731,Methanol,67-56-1,OKKJLVBELUTLKV-UHFFFAOYSA-N,Methanol,CO,"InChI=1S/CH4O/c1-2/h2H,1H3
+",CH4O,32.042,32.026215,414,14436,972,5936,1,4/235,2,235
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID2095156,"Fatty acids, tallow, potassium salts",61790-32-7,,,,,,, ,32,,,1,3, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID30105118,"Amines, C11-14-branched alkyl, monohexyl and dihexyl phosphates",80939-62-4,,,,,,, ,49,,,9,3, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID3020596,Ethylbenzene,100-41-4,YNQLUTRBYVCPMQ-UHFFFAOYSA-N,Ethylbenzene,CCC1=CC=CC=C1,"InChI=1S/C8H10/c1-2-8-6-4-3-5-7-8/h3-7H,2H2,1H3
+",C8H10,106.168,106.078250,420,686,241,5918,1,1/235,0,235
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID3021516,Methyl ethyl ketone,78-93-3,ZWEHNKRNPOVVGH-UHFFFAOYSA-N,Butan-2-one,CCC(C)=O,"InChI=1S/C4H8O/c1-3-4(2)5/h3H2,1-2H3
+",C4H8O,72.107,72.057515,422,333,415,11427,1,3/412,1,412
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID3028477,"Benzenamine, N-phenyl-, reaction products with 2,4,4-trimethylpentene",68411-46-1,,,,,,, ,81,,,80,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID3034743,Mineral oil - includes paraffin oil,8012-95-1,,,,,,, ,226,1972,,1379,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID4020080,Ammonium hydroxide,1336-21-6,VHUUQVKOLVNVRT-UHFFFAOYSA-N,Ammonium hydroxide,[NH4+].[OH-],"InChI=1S/H3N.H2O/h1H3;1H2
+",H5NO,35.046,35.037114,229,242,155,1818,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID4026052,Stoddard solvent IIC,64742-88-7,,,,,,, ,157,,,5370,2, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID4027028,Carbon dioxide,124-38-9,CURLTUGMZLYLDI-UHFFFAOYSA-N,Methanedione,O=C=O,"InChI=1S/CO2/c2-1-3
+",CO2,44.009,43.989829,271,79863,152,2537,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID4028252,Light aromatic solvent naphtha (petroleum),64742-95-6,,,,,,, ,181,4,,6407,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID5026386,Propane,74-98-6,ATUOYWHBWRKTHZ-UHFFFAOYSA-N,Propane,CCC,"InChI=1S/C3H8/c1-3-2/h3H2,1-2H3
+",C3H8,44.097,44.062600,282,1793,183,8924,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID5027697,Naphtha,8030-30-6,,,,,,, ,159,344,,3611,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID5029633,Potassium hydroxide,1310-58-3,KWYUFKZDYYNOTN-UHFFFAOYSA-M,Potassium hydroxide,[OH-].[K+],"InChI=1S/K.H2O/h;1H2/q+1;/p-1
+",HKO,56.105,55.966446,266,818,253,4058,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID6020569,"1,2-Epoxybutane",106-88-7,RBACIKXCRWGCBB-UHFFFAOYSA-N,2-Ethyloxirane,CCC1CO1,"InChI=1/C4H8O/c1-2-4-3-5-4/h4H,2-3H2,1H3
+",C4H8O,72.107,72.057515,208,26,109,255,1,8/409,2,409
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID6020856,N-Methyl-2-pyrrolidone,872-50-4,SECXISVLQFMRJM-UHFFFAOYSA-N,1-Methylpyrrolidin-2-one,CN1CCCC1=O,"InChI=1S/C5H9NO/c1-6-4-2-3-5(6)7/h2-4H2,1H3
+",C5H9NO,99.133,99.068414,373,217,393,656,1,16/894,2,894
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID6021325,Tetrafluoroethylene,116-14-3,BFKJFAAPBSQJPD-UHFFFAOYSA-N,Tetrafluoroethene,FC(F)=C(F)F,"InChI=1S/C2F4/c3-1(4)2(5)6
+",C2F4,100.016,99.993613,184,89,79,487,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID6026296,Water,7732-18-5,XLYOFNOQVPJJNP-UHFFFAOYSA-N,Water,O,"InChI=1S/H2O/h1H2
+",H2O,18.015,18.010565,300,140447,857,32127,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID6027680,Turpentine oils,8006-64-2,,,,,,, ,128,1293,,61,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID6027684,Kerosine,8008-20-6,,,,,,, ,178,712,,1591,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID6027717,Turpentine,9005-90-7,,,,,,, ,111,1293,,338,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID60895035,"1-Decene, homopolymer, hydrogenated",68037-01-4,,,,,,, ,120,,,244,2, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID7020762,Isopropanol,67-63-0,KFZMGEQAYNKOFK-UHFFFAOYSA-N,Propan-2-ol,CC(C)O,"InChI=1S/C3H8O/c1-3(2)4/h3-4H,1-2H3
+",C3H8O,60.096,60.057515,485,1350,1648,11382,1,38/235,16,235
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID7021360,1-Methylbenzene,108-88-3,YXFVVABEGXRONW-UHFFFAOYSA-N,Toluene,CC1=CC=CC=C1,"InChI=1S/C7H8/c1-7-5-3-2-4-6-7/h2-6H,1H3
+",C7H8,92.141,92.062600,489,7662,921,20905,1,0/247,0,247
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID7024087,2-Ethoxyethanol,110-80-5,ZNQVEEAIQZEUHB-UHFFFAOYSA-N,2-Ethoxyethan-1-ol,CCOCCO,"InChI=1S/C4H10O2/c1-2-6-4-3-5/h5H,2-4H2,1H3
+",C4H10O2,90.122,90.068080,275,127,317,554,1,5/851,1,851
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID7027673,Hydrocarbon waxes,8002-74-2,,,,,,, ,199,3249,,701,1, ,,
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID8021276,Sodium hypochlorite,7681-52-9,SUKJFIGYRHOWBL-UHFFFAOYSA-N,Sodium hypochlorite,[Na+].[O-]Cl,"InChI=1S/ClO.Na/c1-2;/q-1;+1
+",ClNaO,74.44,73.953537,267,4607,92,823,1,0/79,0,79
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID8021482,Acetone,67-64-1,CSCPPACGZOOCGX-UHFFFAOYSA-N,Propan-2-one,CC(C)=O,"InChI=1S/C3H6O/c1-3(2)4/h1-2H3
+",C3H6O,58.08,58.041865,434,7176,830,10414,1,1/235,0,235
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID8021519,2-(2-Butoxyethoxy)ethanol,112-34-5,OAYXUHPQHDHDDZ-UHFFFAOYSA-N,2-(2-Butoxyethoxy)ethan-1-ol,CCCCOCCOCCO,"InChI=1S/C8H18O3/c1-2-3-5-10-7-8-11-6-4-9/h9H,2-8H2,1H3
+",C8H18O3,162.229,162.125594,355,19,134,1885,1,10/854,1,854
+https://comptox.epa.gov/dashboard/chemical/details/DTXSID9020584,Ethanol,64-17-5,LFQSCWFLJHTTHZ-UHFFFAOYSA-N,Ethanol,CCO,"InChI=1S/C2H6O/c1-2-3/h3H,2H2,1H3
+",C2H6O,46.069,46.041865,476,79207,1912,7132,1,0/235,0,235

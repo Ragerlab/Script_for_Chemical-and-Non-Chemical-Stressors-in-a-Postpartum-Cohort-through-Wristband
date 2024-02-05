@@ -1,0 +1,669 @@
+---
+title: "Chemical Data Preprocessing"
+author: "Elise Hickman"
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_depth: 6
+    number_sections: false
+---
+
+# Script Summary
+
+Script within this file was used to:
+
++ Summarize the number of days participants wore wristbands (Table S1)
++ Identify participant outliers based on distribution chemical data (Figure S1A)
++ Set a chemical detection filter (Figure S1B)
++ Quantify the number of chemicals detected in any participant or in at least 20% of participants (Table S2)
++ Impute values below the MDL (Figure S2)
++ Calculate time-weighted average data
++ Assess log2-transformation
++ Identify outliers based on PCA analysis of chemical data
++ Calculate descriptive statistics (Table S3)
+
+# Set up workspace
+
+```{r message = FALSE, warning = FALSE}
+# Clear global environment
+rm(list=ls())
+
+# Load packages
+library(tidyverse) # for data organization and manipulation
+library(janitor) # for data cleaning
+library(openxlsx) # for reading in and writing out files
+library(DT) # for displaying tables
+library(table1) # for making tables
+library(patchwork) # for graphing
+library(ggpubr) # for making qqplots
+library(purrr) # for summary stats
+library(factoextra) # for PCA outlier detection
+select <- dplyr::select
+
+# Set theme
+theme_set(theme_bw())
+
+# Set working directory
+setwd("/Users/ehickman/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects/2023/BEE_Wristband_Project/4_Analyses/1_CurrentAnalyses/1_DataPreprocess/1_ChemicalData")
+```
+
+# Import data 
+
+Import data and perform initial data cleaning steps. `mdl` stores the minimum detection levels in ng/g and `wb` stores the wristband chemical data.
+
+```{r message = FALSE, warning = FALSE}
+# Minimum detection levels in ng/g
+mdl <- read.xlsx("1_InputData/Minimum Detection Levels.xlsx", colNames = FALSE) %>%
+  t() %>%
+  as.data.frame() %>%
+  row_to_names(1) %>%
+  remove_rownames() %>% # R had assigned unneeded row names
+  na.omit() %>% # Some of the rows were completely empty
+  dplyr::rename("chemical" = "Name", "mdl" = "MDL (ng/g)", "class_chemical" = "Variable Name", "class" = "Class") %>%
+  mutate(mdl = as.numeric(mdl)) %>%
+  mutate(across(where(is.numeric), round, 2))
+
+# View MDLs
+datatable(mdl)
+
+# Wristband data
+wb <- read.csv("1_InputData/UNC_WristBands_DataSummary_111121_ForImport.csv", na.strings = "NA") %>%
+  separate(Timepoint, into = c("month_timepoint", NA), sep = "-", remove = FALSE) %>%
+  mutate_if(is.character, ~na_if(., '.')) %>%
+  filter(month_timepoint == "6") %>% #keeping only 6-month data
+  select(-c(Timepoint, month_timepoint))
+```
+
+# Preliminary data exploration
+
+What was the distribution of days that participants wore the wristbands? 
+
+```{r}
+wb_days <- wb %>%
+  dplyr::count(Ndays) %>%
+  mutate(prop = prop.table(n)) %>%
+  arrange(-Ndays) %>%
+  mutate(across(prop, round, 2))
+
+write.xlsx(wb_days, "2_OutputTables/WristbandDays.xlsx")
+
+datatable(wb_days)
+```
+
+How many chemicals are present in each chemical class?
+
+```{r}
+chemical_class_counts <- mdl %>%
+  group_by(class) %>%
+  summarise(n_chemicals = length(class)) %>%
+  bind_rows(summarise(., across(where(is.numeric), sum),
+                         across(where(is.character), ~'Total')))
+
+datatable(chemical_class_counts)
+```
+
+How many times was each chemical detected across all samples?
+
+```{r}
+chemical_counts <- data.frame(n_detected = colSums(!is.na(wb[, 2:ncol(wb)]))) %>%
+  rownames_to_column("class_chemical") %>%
+  right_join(mdl %>% dplyr::select(-mdl), by = "class_chemical") %>%
+  relocate(n_detected, .after = chemical) %>%
+  mutate(n_undetected = nrow(wb) - n_detected,
+         perc_detected = n_detected/nrow(wb)*100,
+         perc_undetected = n_undetected/nrow(wb)*100) %>%
+  mutate(across(c(perc_detected, perc_undetected), round, 2)) 
+
+datatable(chemical_counts)
+```
+
+How many chemicals were completely undetected?
+
+```{r}
+nrow(chemical_counts %>% filter(perc_detected == 0))
+```
+
+
+# Outlier identification (distributions) and chemical filter
+
+## Distribution of chemicals detected by participant
+
+Did any participants have a particularly high number of non-detects?
+
+```{r warning = FALSE}
+# 6 month
+wb_det_bysubj <- wb%>%
+  dplyr::select(-Ndays) %>%
+  column_to_rownames("S_ID") %>%
+  mutate(n_det = rowSums(!is.na(.))) %>%
+  mutate(n_NA = rowSums(is.na(.))) %>%
+  rownames_to_column("S_ID") %>%
+  relocate(c(n_NA, n_det), .after = "S_ID")
+
+det_per_participant_graph <- ggplot(wb_det_bysubj, aes(x = n_det)) +
+  geom_histogram(color = "black", 
+                 fill = "gray60",
+                 alpha = 0.7,
+                 binwidth = 2) +
+  ggtitle("Distribution of Number of Chemicals Detected Per Participant") +
+  ylab("Number of Subjects") +
+  xlab("Number of Chemicals Detected") +
+  scale_x_continuous(breaks = seq(0, 70, by = 10), limits = c(0, 70), expand = c(0.025, 0.025)) +
+  scale_y_continuous(breaks = seq(0, 15, by = 5), limits = c(0, 15), expand = c(0, 0)) +
+  theme(plot.title = element_text(hjust = 0.5, size = 16),
+        axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 13),
+        axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 13),
+        axis.text = element_text(size = 12))
+
+det_per_participant_graph
+```
+
+## Distribution of chemical detection by chemical
+
+What was the distribution of chemical detection? (To inform detection filter cutoff)
+
+```{r}
+det_per_chemical_graph <- ggplot(chemical_counts, aes(x = perc_detected)) +
+    geom_histogram(color = "black",
+                   fill = "gray60",
+                   alpha = 0.7,
+                   binwidth = 1) +
+    scale_x_continuous(breaks = seq(0, 100, by = 10), expand = c(0.025, 0.025)) +
+    scale_y_continuous(breaks = seq(0, 25, by = 5), limits = c(0, 25), expand = c(0, 0)) +
+    ggtitle("Distribution of Percentage Chemical Detection") +
+    ylab("Number of Chemicals") +
+    xlab("Percentage of Detection Across All Subjects") +
+    theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(margin = ggplot2::margin(t = 10)),
+        axis.title.y = element_text(margin = ggplot2::margin(r = 10)))
+
+det_per_chemical_graph
+```
+
+Based on these graphs, it appears that there is a natural break at 20%, so we will set our detection filter there. 
+
+```{r}
+# Add annotation column
+chemical_counts <- chemical_counts %>%
+  mutate(det_filter = ifelse(perc_detected > 20, "Yes", "No"))
+
+det_per_chemical_graph_annotated <- ggplot(chemical_counts, aes(x = perc_detected, fill = det_filter)) +
+  geom_histogram(color = "black",
+                 alpha = 0.7,
+                 binwidth = 1) +
+  scale_fill_manual(values = c("gray87", "gray32"), guide = "none") +
+  geom_segment(aes(x = 20, y = 0, xend = 20, yend = 25), color = "firebrick", linetype = 2) +
+  scale_x_continuous(breaks = seq(0, 100, by = 10), expand = c(0.025, 0.025)) +
+  scale_y_continuous(breaks = seq(0, 25, by = 5), limits = c(0, 25), expand = c(0, 0)) +
+  ggtitle("Distribution of Percentage Chemical Detection") +
+  ylab("Number of Chemicals") +
+  xlab("Percentage of Detection Across All Subjects") +
+  theme(plot.title = element_text(hjust = 0.5, size = 16),
+        axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 13),
+        axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 13),
+        axis.text = element_text(size = 12))
+
+det_per_chemical_graph_annotated
+```
+
+Create final figure panel: 
+
+```{r warning = FALSE}
+# Final figure panel
+figure_panel_chem_det <- det_per_participant_graph / det_per_chemical_graph_annotated + 
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(face = "bold", size = 18))
+
+pdf(file = "3_OutputFigs/PercentChemDetFilterPanel.pdf",
+    height = 7, 
+    width = 10)
+
+figure_panel_chem_det
+
+invisible(dev.off())
+
+figure_panel_chem_det
+```
+
+Apply chemical detection filter.
+
+```{r}
+# Create vector of chemicals to keep
+chemicals_20percsubj <- chemical_counts %>%
+  filter(perc_detected >= 20)
+
+# Filter data frame
+wb_filtered <- wb %>%
+  column_to_rownames("S_ID") %>%
+  dplyr::select(all_of(chemicals_20percsubj$class_chemical)) %>%
+  mutate(across(everything(), as.numeric))
+```
+
+
+What number of chemicals in each class was detected at the threshold of 1) being detected in any sample or 2) being detected in 20% or more of samples?
+
+```{r}
+chemical_count_byclass <- chemical_counts %>%
+  filter(class != "Total") %>%
+  group_by(class) %>%
+  summarise(n_chemicals = n(), 
+            n_chemicals_det = sum(n_detected > 0), 
+            n_chemicals_det_20percsubj = sum(perc_detected >= 20)) %>%
+  bind_rows(summarise(., across(where(is.numeric), sum),
+                         across(where(is.character), ~'Total')))
+
+write.xlsx(chemical_count_byclass, "2_OutputTables/ChemCountDetection_ByClass.xlsx")
+
+datatable(chemical_count_byclass)
+```
+
+# Data imputation with GSimp
+
+## Load functions
+
+Application of this code requires use of GSimp package functions, which can be downloaded [here](https://github.com/WandeRum/GSimp). You will also need to install any additional packages that are needed as part of these scripts. The functions from this repository were modified for the current analysis by including MDL values as the last row in the data frame so that the minimum value in the data frame is the MDL, and this is used as the upper limit. Modified GSimp code is included in the repository for this project. 
+
+```{r message = FALSE, warning = FALSE}
+# Load GSimp functions
+options(stringsAsFactors = F)
+
+source('/Users/ehickman/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects/2023/BEE_Wristband_Project/4_Analyses/1_CurrentAnalyses/1_DataPreprocess/1_ChemicalData/4_GSimpFunctions/Trunc_KNN/Imput_funcs.r', local = TRUE)
+
+source('/Users/ehickman/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects/2023/BEE_Wristband_Project/4_Analyses/1_CurrentAnalyses/1_DataPreprocess/1_ChemicalData/4_GSimpFunctions/GSimp_evaluation.R', local = TRUE)
+
+source('/Users/ehickman/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects/2023/BEE_Wristband_Project/4_Analyses/1_CurrentAnalyses/1_DataPreprocess/1_ChemicalData/4_GSimpFunctions/GSimp.R', local = TRUE)
+```
+
+## Prepare data frame
+
+The input for this function is the detection-filtered data frame with the MDL added as the last row in the data frame. 
+
+```{r}
+# Create data frame containing the chemical names and MDLs in the same order as the columns of the filtered data frame
+wb_filtered_GSimp_mdls <- wb_filtered %>%
+  t() %>%
+  as.data.frame() %>%
+  rownames_to_column("class_chemical") %>%
+  dplyr::select(class_chemical) %>%
+  left_join(mdl %>% dplyr::select(c(class_chemical, mdl)), by = "class_chemical") %>%
+  dplyr::select(c(class_chemical, mdl))
+
+# Check to make sure mdl values are the same order as the columns in the input data frame. This should return "TRUE."
+identical(wb_filtered_GSimp_mdls$class_chemical, names(wb_filtered))
+
+# Add MDLs as a row in the chemical data frame
+wb_filtered_forGSimp <- wb_filtered %>%
+  t() %>% as.data.frame() %>%
+  rownames_to_column("class_chemical") %>%
+  left_join(mdl %>% dplyr::select(c(class_chemical, mdl)), by = "class_chemical") %>%
+  column_to_rownames("class_chemical") %>%
+  t() %>% as.data.frame() %>%
+  mutate(across(everything(), as.numeric))
+```
+
+## Run imputation
+```{r}
+# Apply function
+set.seed(407)
+wb_filt_imp <- pre_processing_GS_wrapper(wb_filtered_forGSimp)
+```
+
+## Assess imputation
+
+How many values did GSimp impute above the MDL?
+
+```{r}
+# Make data frame with original data that indicates whether a value was missing or not
+wb_imp_annotation <- wb_filtered %>%
+  rownames_to_column("S_ID") %>%
+  pivot_longer(!S_ID, names_to = "class_chemical", values_to = "Value") %>%
+  unite("unique_id",  c(S_ID, class_chemical), remove = FALSE) %>%
+  mutate(was_na = ifelse(is.na(Value), "Yes", "No")) %>%
+  dplyr::select(unique_id, was_na)
+
+# Add annotation column and mdl to imputed data frame
+wb_filt_imp_summary <- wb_filt_imp %>%
+  rownames_to_column("S_ID") %>%
+  pivot_longer(!S_ID, names_to = "class_chemical", values_to = "Value") %>%
+  unite("unique_id",  c(S_ID, class_chemical), remove = FALSE) %>%
+  left_join(wb_imp_annotation, by = "unique_id") %>%
+  left_join(mdl, by = "class_chemical")
+
+# Count how many observations were NA before imputation
+wb_total_na <- nrow(wb_filt_imp_summary %>% filter(was_na == "Yes"))
+
+# Count how many imputed values are above MDL for each chemical
+wb_filt_imp_summary_table <- wb_filt_imp_summary %>%
+  filter(was_na == "Yes") %>%
+  mutate(high_mdl = ifelse(Value > mdl, "Yes", "No")) %>%
+  group_by(class_chemical) %>%
+  summarize(count_above_mdl = sum(high_mdl == "Yes"))
+
+datatable(wb_filt_imp_summary_table)
+
+# Count total number of imputed values
+sum(wb_filt_imp_summary_table$count_above_mdl)
+
+# Calculate percentage of total NAs that were imputed above the MDL
+sum(wb_filt_imp_summary_table$count_above_mdl)/wb_total_na*100
+```
+
+Graph imputed values (red) with MDL shown as dotted line.
+
+```{r}
+# Determine which chemicals to graph - will graph 3 least abundant, 3 middle abundant, 3 high abundant (but not 100% detection). This subset was selected by manual inspection of chemical count data.
+chemicals_for_gsimp_graph_df <- data.frame(
+  "class_chemical" = c("Pest_Fipronil", "BDE_154", "PAH_Benzaanth", "OPE_TCEP", "Pest_Chlorpyrifos", "Pest_Azoxystrobin", "PCB_11", "OPE_TCPP3", "alkylOPE_B4IPPPP"),
+  "abundance_group" = c("Low", "Low", "Low", "Medium", "Medium", "Medium", "High", "High", "High"))
+
+# Make a vector with names of chemicals to graph 
+chemicals_for_gsimp_graph <- chemicals_for_gsimp_graph_df$class_chemical
+
+# Add placeholder column and filter data frame to include only sample of chemicals to highlight and add annotation for low, high, or medium abundance
+wb_filt_imp_summary_forgraph <- wb_filt_imp_summary %>%
+  filter(class_chemical %in% chemicals_for_gsimp_graph) %>%
+  left_join(chemicals_for_gsimp_graph_df, by = "class_chemical") %>%
+  mutate(placeholder = "1")
+
+# Level Facet Plot By Low/High/Medium
+wb_filt_imp_summary_forgraph$chemical <- factor(wb_filt_imp_summary_forgraph$chemical, levels = c("Fipronil", "BDE 154", "Benz[a]anthracene", "TCEP", "Chlorpyrifos", "Azoxystrobin", "PCB11", "TCPP3", "B4IPPPP"))
+
+# Make figure panel showing imputed versus non-imputed values
+set.seed(854)
+
+imputation_panel <- ggplot(data = wb_filt_imp_summary_forgraph, aes(x = placeholder, y = Value)) +
+  geom_hline(aes(yintercept = mdl), linetype = 2, color = "grey32") +
+  geom_point(aes(color = was_na), 
+             size = 1, 
+             alpha = 0.7, 
+             position=position_jitter(width=0.1, height=0.1)) +
+  scale_color_manual(values = c("black", "firebrick"), name = "Was imputed?", labels = c("No", "Yes")) +
+  labs(y = "Chemical Concentration (ng/g)") +
+  scale_y_log10(expand = c(0, 0.5)) +
+  theme(axis.ticks.x = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank()) +
+  facet_wrap(~chemical, scales = "free_y", nrow = 3) 
+
+pdf(file = "3_OutputFigs/GSimp_Imp_Panel.pdf",
+    width = 7,
+    height = 5)
+
+imputation_panel
+
+invisible(dev.off())
+  
+imputation_panel
+```
+
+# Time-weighted average and log2-transformation
+
+```{r}
+# Write pseudolog function
+pseudolog <- function(x) {log2(x+1)}
+
+# Time weighted average data
+wb_filt_imp_tw <- wb_filt_imp %>%
+  rownames_to_column("S_ID") %>%
+  mutate(S_ID = as.integer(S_ID)) %>%
+  right_join(wb %>% dplyr::select(S_ID, Ndays), by = "S_ID") %>%
+  mutate(S_ID = as.character(S_ID)) %>%
+  relocate(Ndays, .after = S_ID) %>%
+  mutate(across(where(is.numeric), .fns = function(x) x/Ndays)) %>%
+  dplyr::select(-Ndays) %>%
+  column_to_rownames("S_ID")
+
+# Time weighted average + log2 transformation
+wb_filt_imp_tw_log2 <- wb_filt_imp %>%
+  rownames_to_column("S_ID") %>%
+  mutate(S_ID = as.integer(S_ID)) %>%
+  right_join(wb %>% dplyr::select(S_ID, Ndays), by = "S_ID") %>%
+  mutate(S_ID = as.character(S_ID)) %>%
+  relocate(Ndays, .after = S_ID) %>%
+  mutate(across(where(is.numeric), .fns = function(x) x/Ndays)) %>%
+  dplyr::select(-Ndays) %>%
+  column_to_rownames("S_ID") %>%
+  mutate(across(everything(), .fns = pseudolog))
+```
+
+
+# Assessment of normality of chemical data pre- and post- log2 transformation
+
+## Write function to test normality
+
+This function takes the input of a numeric data frame with variables in columns and samples/subjects in rows and assesses normality through four different approaches:
+
+1. Quantitative - Individual endpoint values of Shapiro Wilk Test with BH p-adjust < 0.05 
+2. Quantitative - Summary level Shapiro Wilk results quantifying percentage of endpoints that were normal versus non-normal by BH p-adjust < 0.05
+3. Qualitative - Histograms 
+4. Qualitative - QQ plots. 
+
+Each of these results are store in a list, which is the final output of the function. Each item can be called with their respective numbers. 
+
+```{r}
+normality_assessment <- function(data) {
+  
+  ## [1] SHAPIRO WILK TEST WITH ALL ENDPOINTS
+  
+  # Test normality of each chemical
+  shapiro_wilk <- apply(data, 2, shapiro.test)
+  
+  # Create data frame to summarize results
+  shapiro_wilk <- do.call(rbind.data.frame, shapiro_wilk)
+  shapiro_wilk <- format(shapiro_wilk, scientific = FALSE)
+
+  # Add column to adjust for multiple hypothesis testing
+  shapiro_wilk$p.value.adj <- p.adjust(shapiro_wilk$p.value, "BH")
+  
+  # Add column for normality conclusion
+  shapiro_wilk <- shapiro_wilk %>% mutate(normal = ifelse(p.value.adj < 0.05, F, T))
+
+  ## [2] SHAPIRO WILK TEST SUMMARY
+  
+  # Make new data frame with summary values
+  shapiro_wilk_summ <- data.frame("count_normal" = nrow(shapiro_wilk %>% filter(p.value.adj >= 0.05)),
+                                 "count_nonnormal" = nrow(shapiro_wilk %>% filter(p.value.adj < 0.05))) %>%
+  mutate("perc_normal" = count_normal/(count_normal + count_nonnormal)*100)
+  
+  ## [3] PANEL OF HISTOGRAMS
+  
+  histograms <- data %>%
+  pivot_longer(all_of(colnames(data)), names_to = "endpoint", values_to = "value") %>%
+  ggplot(aes(value)) +
+  geom_histogram(fill = "gray32", color = "black") +
+  facet_wrap(~ endpoint, scales = "free")
+  
+  ## [4] PANEL OF QQ PLOTS
+  
+  qqplots <- ggqqplot(data %>%
+  pivot_longer(all_of(colnames(data)), names_to = "endpoint", values_to = "value"), 
+  "value", facet.by = "endpoint", ggtheme = theme_bw(), scales = "free")
+  
+  ## STORE RESULTS
+  results <- list(shapiro_wilk, shapiro_wilk_summ, histograms, qqplots)
+
+}
+```
+
+## Apply function to data and extract results
+
+Raw data:
+```{r message = FALSE}
+# Run function
+wb_filt_imp_tw_normality <- normality_assessment(wb_filt_imp_tw)
+
+# View average p-adj
+mean(wb_filt_imp_tw_normality[[1]]$p.value.adj)
+
+# View percent normal
+wb_filt_imp_tw_normality[[2]]
+
+# View histograms
+wb_filt_imp_tw_normality[[3]]
+
+# View qqplots
+wb_filt_imp_tw_normality[[4]]
+```
+
+Log2 data:
+```{r message = FALSE}
+# Run function
+wb_filt_imp_tw_log2_normality <- normality_assessment(wb_filt_imp_tw_log2)
+
+# View average p-adj
+mean(wb_filt_imp_tw_log2_normality[[1]]$p.value.adj)
+
+# View percent normal
+wb_filt_imp_tw_log2_normality[[2]]
+
+# View histograms
+wb_filt_imp_tw_log2_normality[[3]]
+
+# View qqplots
+wb_filt_imp_tw_log2_normality[[4]]
+```
+Log2 transforming data moves data closer to a normal distribution, so we will move forward with data in that format for subsequent analyses. 
+```{r}
+# Write out time-weighted average data for downstream analyses
+write.xlsx(wb_filt_imp_tw %>% rownames_to_column("S_ID"), file = "5_OutputData/ChemicalData_Filtered_Imp_TW.xlsx")
+```
+
+# Outlier identification (PCA)
+
+```{r}
+# Prepare data frame
+wb_log2_sc <- wb_filt_imp_tw_log2 %>%
+  scale() %>% # Scale values
+  data.frame() # Change back to data frame
+
+# Run PCA
+pca <- prcomp(wb_log2_sc)
+
+# Visualize PCA
+pca_chemplot <- fviz_pca_ind(pca, 
+             label = "none",
+             pointsize = 3) +
+theme(axis.title = element_text(face = "bold", size = rel(1.1)),
+      panel.border = element_rect(fill = NA, color = "black", linewidth = 0.3),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_blank(), 
+      plot.title = element_text(hjust = 0.5),
+      legend.position = "none")
+
+pca_chemplot
+```
+
+By visual inspection, it looks like there may be some outliers, so we can use a formula to detect outliers. One standard way to detect outliers is the criterion of being "more than 6 standard deviations away from the mean." [Source](https://privefl.github.io/blog/detecting-outlier-samples-in-pca/). 
+
+```{r}
+# Create a scoring funciton to detect PCA sample outliers. The input is PCA results data frame and the number of standard deviations for the cutoff. The output is outlier names. 
+outlier_detection = function(pca_df, sd){
+
+    # getting scores
+    scores = pca_df$x
+    
+    # identifying samples that are > 6 standard deviations away from the mean
+    outlier_indices = apply(scores, 2, function(x) which( abs(x - mean(x)) > (sd * sd(x)) )) %>%
+        Reduce(union, .)
+    
+    # getting sample names
+    outliers = rownames(scores)[outlier_indices]
+    
+    return(outliers)
+}
+
+# Call function with different standard deviation cutoffs
+outliers_6 <- outlier_detection(pca, 6)
+outliers_5 <- outlier_detection(pca, 5)
+outliers_4 <- outlier_detection(pca, 4)
+outliers_3 <- outlier_detection(pca, 3)
+
+# Summary data frame
+outlier_summary <- data.frame(sd_cutoff = c(6, 5, 4, 3), n_outliers = c(length(outliers_6), length(outliers_5), length(outliers_4), length(outliers_3)))
+
+outlier_summary
+```
+
+We don't see any outliers that are > 6 SD form the mean, so we will proceed with the dataset without filtering any participants out. 
+
+# Descriptive statistics
+
+```{r warning = FALSE}
+# Define summary functions
+summary_functs <- lst(min, median, mean, max, sd)
+
+# Raw data
+wb <- wb %>% mutate(across(2:ncol(wb), as.numeric)) 
+
+raw_summarystats <- map_dfr(summary_functs, ~ summarize(wb, across(2:ncol(wb), .x, na.rm = TRUE)), .id = "statistic") %>%
+  t() %>%
+  as.data.frame() %>%
+  row_to_names(1) %>%
+  na.omit() %>%
+  rownames_to_column("class_chemical") %>%
+  left_join(mdl %>% dplyr::select(-mdl), by = "class_chemical") %>%
+  mutate(across(min:sd, as.numeric)) %>%
+  mutate(across(where(is.numeric), round, 2)) %>%
+  arrange(-mean)
+
+# Filtered + imputed data
+imp_summarystats <- map_dfr(summary_functs, 
+                                 ~ summarize(wb_filt_imp, across(1:ncol(wb_filt_imp), 
+                                                                       .x, na.rm = TRUE)), .id = "statistic") %>%
+  t() %>%
+  as.data.frame() %>%
+  row_to_names(1) %>%
+  rownames_to_column("class_chemical") %>%
+  left_join(mdl %>% dplyr::select(-mdl), by = "class_chemical") %>%
+  mutate(across(min:sd, as.numeric)) %>%
+  mutate(across(where(is.numeric), round, 2)) %>%
+  arrange(-mean) %>%
+  relocate(c(class, chemical), .after = class_chemical) %>%
+  rename_with(~paste0(., "_imputed"), min:sd)
+
+# Filtered + imputed + TWA data
+imp_tw_summarystats <- map_dfr(summary_functs, 
+                                 ~ summarize(wb_filt_imp_tw, across(1:ncol(wb_filt_imp_tw), 
+                                                                       .x, na.rm = TRUE)), .id = "statistic") %>%
+  t() %>%
+  as.data.frame() %>%
+  row_to_names(1) %>%
+  rownames_to_column("class_chemical") %>%
+  left_join(mdl %>% dplyr::select(-mdl), by = "class_chemical") %>%
+  mutate(across(min:sd, as.numeric)) %>%
+  mutate(across(where(is.numeric), round, 2)) %>%
+  arrange(-mean) %>%
+  relocate(c(class, chemical), .after = class_chemical) %>%
+  rename_with(~paste0(., "_imputed_tw"), min:sd)
+
+# Import chemical name, CAS, and DTXSIDs.
+cas_dtxs <- read.xlsx("1_InputData/CAS_DTXSID.xlsx") %>%
+  clean_names() %>%
+  mutate(chemical = recode(chemical, "pyraclostrobin" = "Pyraclostrobin")) # recode these two chemical names so they match the chemical data
+
+# Combine descriptive statistics and count/detection data, first with just the raw summary stats, then with the other iterations of the data
+wb_summarystats <- chemical_counts %>%
+  full_join(raw_summarystats %>% dplyr::select(-c(chemical, class)), by = "class_chemical") %>%
+  relocate(c(class, chemical), .after = class_chemical) %>%
+  rename_with(~paste0(., "_raw"), min:sd) %>%
+  relocate(n_detected:perc_undetected, .after = chemical) %>%
+  right_join(mdl %>% dplyr::select(c(class_chemical, mdl)), by = "class_chemical") %>%
+  relocate(mdl, .after = chemical) %>%
+  full_join(imp_summarystats %>% dplyr::select(-c(class, chemical)), by = "class_chemical") %>%
+  full_join(imp_tw_summarystats %>% dplyr::select(-c(class, chemical)), by = "class_chemical") %>%
+  full_join(cas_dtxs %>% dplyr::select(-c(cas_cas_number)), by = "chemical") %>%
+  relocate("compound_name", .before = "chemical") %>%
+  relocate(c("cas_number", "dtxsid"), .after = "chemical") %>%
+  rename("chemical_name" = "compound_name", "chemical_abbreviation" = "chemical") %>%
+  dplyr::select(-class_chemical) %>%
+  group_by(class) %>%
+  arrange(-mean_raw, .by_group = TRUE) %>%
+  mutate(across(everything(), as.character)) %>%
+  replace(is.na(.), "-") %>%
+  dplyr::select(-c(n_undetected, perc_undetected))
+
+# Write out table for supplement
+write.xlsx(wb_summarystats, file = "2_OutputTables/SummaryStats_ByChemical.xlsx")
+```
+

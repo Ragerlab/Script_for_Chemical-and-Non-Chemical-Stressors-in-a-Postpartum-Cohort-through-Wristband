@@ -1,0 +1,428 @@
+---
+title: "Hair Cortisol Subset Analysis"
+author: "Elise Hickman"
+date: "2023-11-17"
+output: html_document
+---
+
+# Set up workspace
+
+```{r message = FALSE, warning = FALSE}
+# Clear global environment
+rm(list=ls())
+
+# Load packages
+library(tidyverse) # for data organization and manipulation
+library(janitor) # for data cleaning
+library(openxlsx) # for importing and exporting files
+library(table1) # for demographic table subset
+library(outliers) # for outliers test
+library(EnvStats) # for outlier test
+library(Hmisc) # for correlation analysis
+library(rstatix) # for Dunn's test
+library(FSA) # package that contains Dunn test function
+library(DT) # for displaying tables
+library(rcartocolor) # for graphing
+select <- dplyr::select
+rename <- dplyr::rename
+
+# Set theme
+theme_set(theme_bw())
+
+# Set working directory
+setwd("/Users/ehickman/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects/2023/BEE_Wristband_Project/4_Analyses/1_CurrentAnalyses/4_HairCortisolAnalysis")
+```
+
+# Import data
+
+For this and following analyses, the key data frames are:
+
++ `wb_log2`: chemical data, log2 transformed
++ `demo`: demographic data
++ `ss_data`: social stressor data
++ `hc_data`: hair cortisol data
++ `chemical_key`: chemical information (classes, names)
+
+```{r}
+# Import and log2-transform chemical data (to match other analysis and allow for closer to normality for ANCOVA)
+pseudolog <- function(x) log2(x+1)
+
+wb_log2 <- read.xlsx("1_InputData/ChemicalData_Filtered_Imp_TW.xlsx") %>%
+  mutate(across(where(is.numeric), pseudolog))
+
+# Import demographic, hair cortisol, and social stressor data
+demo <- read.xlsx("1_InputData/Demographic_Data_Cleaned.xlsx") %>%
+  mutate(S_ID = as.character(S_ID))
+
+ss_data <- read.xlsx("1_InputData/SS_Data_Cleaned.xlsx") %>%
+  mutate(S_ID = as.character(S_ID))
+
+hc_data <- read.xlsx("1_InputData/Hair_Cortisol_Data.xlsx") %>% 
+  na.omit() %>%
+  rename("hc" = "pc_hair_hcc_t0")
+
+# Import and clean chemical information
+chemical_key <- read.xlsx("1_InputData/Minimum Detection Levels.xlsx", colNames = FALSE) %>%
+  t() %>% as.data.frame() %>%
+  remove_rownames() %>% # R had assigned unneeded row names
+  row_to_names(1) %>% # Add column names
+  na.omit() %>% # Some of the rows were completely empty
+  dplyr::rename("chemical" = "Name", "mdl" = "MDL (ng/g)", "class_chemical" = "Variable Name", "class" = "Class") %>%
+  select(-mdl)
+```
+
+# Demographics of data subset
+
+```{r}
+# Filter demographic data
+demo_filtered <- demo %>%
+  filter(S_ID %in% hc_data$S_ID)
+
+# Create new labels for the demographics table
+label(demo_filtered$mat_age_birth) <- "Age at Childbirth"
+label(demo_filtered$pc_latino_hispanic) <- "Latino or Hispanic"
+label(demo_filtered$pc_race_cleaned) <- "Race"
+label(demo_filtered$pc_ed) <- "Educational Attainment"
+label(demo_filtered$relationship) <- "Relationship Status"
+label(demo_filtered$yrs_with_part) <- "Years with Partner"
+
+# Create function for custom table so that Mean (SD) is shown for continuous variables
+my.render.cont <- function(x) {
+  with(stats.apply.rounding(stats.default(x), digits=2), c("",
+                                                           "Mean (SD)"=sprintf("%s (&plusmn; %s)", MEAN, SD)))
+}
+
+# Make table of demographics.
+table1(~ mat_age_birth + pc_race_cleaned + pc_latino_hispanic + pc_ed + relationship + yrs_with_part, 
+       data = demo_filtered, 
+       render.continuous = my.render.cont)
+```
+
+# Distribution of hair cortisol data
+
+What is the distribution of hair cortisol data?
+```{r}
+hc_dist <- ggplot(hc_data, aes(x = hc)) +
+  geom_histogram(color = "black", 
+                 fill = "gray60",
+                 alpha = 0.7,
+                 binwidth = 2) +
+  ylab("Number of Subjects") +
+  xlab("Hair Cortisol (pg cortisol/mg hair)")
+
+hc_dist
+```
+
+We can test to see if these subjects are outliers using both Z-scores:
+
+```{r}
+# Scale data
+hc_data <- hc_data %>%
+  mutate(hc_scaled = scale(hc))
+
+# Which subjects are above 3.29?
+hc_data %>% filter(hc_scaled > 3.29)
+```
+
+Remove outliers and re-plotting histogram:
+```{r}
+hc_data_filtered <- hc_data %>% filter(S_ID != 1153) %>% filter(S_ID != 1207)
+
+hc_dist_outrem <- ggplot(hc_data_filtered, aes(x = hc)) +
+  geom_histogram(color = "black", 
+                 fill = "gray60",
+                 alpha = 0.7,
+                 binwidth = 2) +
+  ylab("Number of Subjects") +
+  xlab("Hair Cortisol (pg cortisol/mg hair)") +
+  scale_x_continuous(breaks = seq(0, 30, by = 5), limits = c(0, 30), expand = c(0.025, 0.025)) +
+  theme(axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 13),
+        axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 13),
+        axis.text = element_text(size = 12))
+  
+
+hc_dist_outrem
+```
+
+Clean up data frame and assign subjects to high/low hair cortisol groups based on median value:
+```{r}
+hc_data_filtered <- hc_data_filtered %>%
+  mutate(hc_cat = ifelse(hc <= median(hc_data_filtered$hc), "Low", "High")) %>%
+  select(-hc_scaled)
+```
+
+# Hair cortisol + individual chemicals
+
+## Continous hair cortisol data (correlation)
+```{r}
+# Join together data frames
+wb_log2_hc_cont <- hc_data_filtered %>%
+  left_join(wb_log2, by = "S_ID") %>%
+  select(-hc_cat) %>%
+  column_to_rownames("S_ID")
+
+# Run correlation analysis
+hc_correlation_spearman <- wb_log2_hc_cont %>% 
+  as.matrix() %>%
+  rcorr(type = "spearman") 
+
+# Extract R values
+hc_corr_spearman_R <- hc_correlation_spearman[[1]] %>%
+  as.data.frame() %>%
+  rownames_to_column(var = 'var1') %>%
+  gather(var2, value, -var1) %>%
+  filter(var1 == "hc") %>%
+  filter(var2 != "hc") %>%
+  unite(var1_var2, var1, var2, remove = FALSE) %>%
+  rename("r" = "value")
+
+# Extract p values
+hc_corr_spearman_p <- hc_correlation_spearman[[3]] %>%
+  as.data.frame() %>%
+  rownames_to_column(var = 'var1') %>%
+  gather(var2, value, -var1) %>%
+  filter(var1 == "hc") %>%
+  filter(var2 != "hc") %>%
+  unite(var1_var2, var1, var2, remove = TRUE) %>%
+  rename("p" = "value")
+
+# Combine R and p values
+hc_correlation_spearman <- left_join(hc_corr_spearman_R, hc_corr_spearman_p, by = "var1_var2") %>%
+  mutate(padj = p.adjust(p, method = "BH")) %>%
+  mutate(Rsq = r * r) %>%
+  relocate(Rsq, .after = "r")
+
+# How many correlations have |R| > 0.6 and p < 0.05?
+nrow(hc_correlation_spearman %>% filter(abs(r) >= 0.6 & p < 0.05))
+```
+
+## Categorial hair cortisol data (between groups statistical test)
+
+```{r warning = FALSE}
+# Join together data frames
+wb_log2_hc_cat <- hc_data_filtered %>%
+  left_join(wb_log2, by = "S_ID") %>%
+  select(-hc) %>%
+  column_to_rownames("S_ID")
+
+# Create a list of column names (chemicals) to run the analysis on
+endpoints <- colnames(wb_log2_hc_cat %>% select(c(alkylOPE_2IPPDPP:Phthal_TOTM))) 
+
+# Create data frame to store results
+hc_wilcoxres <- data.frame()
+
+# Run for loop
+for (i in 1:length(endpoints)) {
+  
+  # Assign a name to the endpoint variable.
+  endpoint <- endpoints[i]
+  
+  # Run wilcox test and store in results data frame.
+  res <- wilcox.test(as.formula(paste0(endpoint, "~ hc_cat", sep = "")), 
+                     data = wb_log2_hc_cat)
+  
+  res_df <- data.frame(res$p.value) %>% 
+    rename("pval" = "res.p.value") %>%
+    mutate("class_chemical" = endpoint)
+  
+  hc_wilcoxres <- rbind(hc_wilcoxres, res_df)
+}
+
+# Clean data frame
+hc_wilcoxres <- hc_wilcoxres %>%
+  relocate(class_chemical, .before = pval) %>%
+  mutate(padj = p.adjust(pval, method = "BH"))
+
+# How many chemicals with padj < 0.1?
+nrow(hc_wilcoxres %>% filter(padj < 0.1))
+```
+
+Write out hair cortisol results table:
+```{r}
+# Select chemicals that have p < 0.1
+hc_chems <- hc_wilcoxres %>% filter(pval < 0.1) %>% 
+  pull(class_chemical)
+
+# Filter for chemicals of interest, calculate means, and join p-values
+hc_results_table <- wb_log2_hc_cat %>%
+  select(c(hc_cat, all_of(hc_chems))) %>%
+  group_by(hc_cat) %>%
+  summarise(across(everything(), \(x) mean(x))) %>%
+  column_to_rownames("hc_cat") %>%
+  t() %>% data.frame() %>%
+  rownames_to_column("class_chemical") %>%
+  left_join(hc_wilcoxres, by = "class_chemical") %>%
+  arrange(pval)
+  
+# Write out results
+write.xlsx(hc_results_table, "2_OutputTables/HC_Chem_Stats_Res.xlsx")
+```
+
+
+Graph chemicals with significant (or close to significant) differences between high and low hair cortisol:
+
+```{r}
+# Select chemicals that have p < 0.1
+hc_chems <- hc_wilcoxres %>% filter(pval < 0.1) %>% 
+  pull(class_chemical)
+
+# Prepare p-values 
+hc_chems_pvals <- hc_wilcoxres %>%
+  filter(pval < 0.1) %>%
+  mutate(pval = round(pval, digits = 3)) %>%
+  mutate(pval_anno = paste("p = ", pval, sep = ""))
+
+# Prepare y values for graphing the p-values. Note that this had to be through trial and error of different expansion factors
+# Due to different scales and variability within each chemical
+hc_chems_heights <- wb_log2_hc_cat %>%
+  select(all_of(hc_chems)) %>%
+  summarise(across(everything(), max)) %>%
+  t() %>% as.data.frame() %>%
+  rownames_to_column("class_chemical") %>%
+  rename("max_y" = "V1") %>%
+  mutate(pval_y = ifelse(class_chemical == "Phthal_TOTM", max_y*1.5, max_y*20))
+
+# Merge together pvalues and heights
+hc_chems_pval_labels <- left_join(hc_chems_pvals, hc_chems_heights, by = "class_chemical") %>%
+  separate(class_chemical, into = c(NA, "chemical"))
+
+# Prepare data frame for graphing
+hc_graph_data <- wb_log2_hc_cat %>%
+  select(c(all_of(hc_chems), hc_cat)) %>%
+  pivot_longer(-c(hc_cat), names_to = "class_chemical", values_to = "Value") %>%
+  left_join(chemical_key, by = "class_chemical") %>%
+  mutate(chemical = gsub("cypermethrin", "Cypermethrin", chemical)) %>%
+  mutate(hc_cat = fct_relevel(factor(hc_cat), c("Low", "High"))) 
+
+hc_cat_graph <- ggplot() +
+  geom_boxplot(hc_graph_data, 
+               mapping = aes(x = hc_cat, y = Value, color = hc_cat), outlier.shape = NA) +
+  geom_jitter(hc_graph_data, 
+              mapping = aes(x = hc_cat, y = Value, color = hc_cat), size = 0.75, width = 0.1, height = 0.1) +
+  scale_color_manual(values = c("#781c6d", "#ed6925")) +
+  scale_y_log10(expand = expansion(mult = c(0, 0.2)), labels = function(x) format(x, scientific = TRUE)) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_text(margin = margin(t = 0, r = 10, b = 0, l = 0)),
+        legend.position = "none",
+        strip.background = element_rect(fill ="gray25"),
+        strip.text = element_text(color = "white", size = 12)) +
+  labs(y = "Chemical Concentration (Log2(TWA ng/g))") +
+  geom_text(data = hc_chems_pval_labels, mapping = aes(x = 1.5, y = pval_y, label = pval_anno)) +
+  facet_wrap(~chemical, nrow = 1, scales = "free_y")
+
+pdf("3_OutputFigs/HairCortisol_Chem_Panel.pdf",
+    width = 8, height = 3)
+hc_cat_graph
+invisible(dev.off())
+
+hc_cat_graph
+```
+
+# Hair cortisol + social stressors 
+
+## Continous hair cortisol data (correlation)
+```{r}
+# Join together data frames
+ss_data_hc_cont <- hc_data_filtered %>%
+  left_join(ss_data, by = "S_ID") %>%
+  select(-hc_cat) %>%
+  column_to_rownames("S_ID")
+
+# Run correlation analysis
+hc_ss_correlation_spearman <- ss_data_hc_cont %>% 
+  as.matrix() %>%
+  rcorr(type = "spearman") 
+
+# Extract R values
+hc_ss_corr_spearman_R <- hc_ss_correlation_spearman[[1]] %>%
+  as.data.frame() %>%
+  rownames_to_column(var = 'var1') %>%
+  gather(var2, value, -var1) %>%
+  filter(var1 == "hc") %>%
+  filter(var2 != "hc") %>%
+  unite(var1_var2, var1, var2, remove = FALSE) %>%
+  rename("r" = "value")
+
+# Extract p values
+hc_ss_corr_spearman_p <- hc_ss_correlation_spearman[[3]] %>%
+  as.data.frame() %>%
+  rownames_to_column(var = 'var1') %>%
+  gather(var2, value, -var1) %>%
+  filter(var1 == "hc") %>%
+  filter(var2 != "hc") %>%
+  unite(var1_var2, var1, var2, remove = TRUE) %>%
+  rename("p" = "value")
+
+# Combine R and p values
+hc_ss_correlation_spearman <- left_join(hc_ss_corr_spearman_R, hc_ss_corr_spearman_p, by = "var1_var2") %>%
+  mutate(padj = p.adjust(p, method = "BH")) %>%
+  mutate(Rsq = r * r) %>%
+  relocate(Rsq, .after = "r")
+
+# How many correlations have |R| > 0.6 and p < 0.05?
+nrow(hc_ss_correlation_spearman %>% filter(abs(r) >= 0.6 & p < 0.05))
+```
+
+## Categorial hair cortisol data (between groups statistical test)
+
+```{r warning = FALSE}
+# Join together data frames
+ss_data_hc_cat <- hc_data_filtered %>%
+  left_join(ss_data, by = "S_ID") %>%
+  select(-hc) %>%
+  column_to_rownames("S_ID")
+
+# Create a list of column names (chemicals) to run the analysis on
+endpoints <- colnames(ss_data_hc_cat %>% select(c(cpsq1:crs_mean))) 
+
+# Create data frame to store results
+hc_ss_wilcoxres <- data.frame()
+
+# Run for loop
+for (i in 1:length(endpoints)) {
+  
+  # Assign a name to the endpoint variable.
+  endpoint <- endpoints[i]
+  
+  # Run wilcox test and store in results data frame.
+  res <- wilcox.test(as.formula(paste0(endpoint, "~ hc_cat", sep = "")), 
+                     data = ss_data_hc_cat)
+  
+  res_df <- data.frame(res$p.value) %>% 
+    rename("pval" = "res.p.value") %>%
+    mutate("variable" = endpoint)
+  
+  hc_ss_wilcoxres <- rbind(hc_ss_wilcoxres, res_df)
+}
+
+# Clean data frame
+hc_ss_wilcoxres <- hc_ss_wilcoxres %>%
+  relocate(variable, .before = pval) %>%
+  mutate(padj = p.adjust(pval, method = "BH"))
+
+# How many chemicals with padj < 0.1?
+nrow(hc_ss_wilcoxres %>% filter(padj < 0.1))
+```
+
+```{r}
+# Select chemicals that have p < 0.1
+hc_ss_chems <- hc_ss_wilcoxres %>% filter(pval < 0.1) %>% 
+  pull(variable)
+
+# Filter for chemicals of interest, calculate means, and join p-values
+hc_ss_results_table <- ss_data_hc_cat %>%
+  select(c(hc_cat, all_of(hc_ss_chems))) %>%
+  group_by(hc_cat) %>%
+  summarise(across(everything(), \(x) mean(x, na.rm = TRUE))) %>%
+  column_to_rownames("hc_cat") %>%
+  t() %>% data.frame() %>%
+  rownames_to_column("variable") %>%
+  left_join(hc_ss_wilcoxres, by = "variable") %>%
+  arrange(pval) %>%
+  mutate(high_high = ifelse(High > Low, "Yes", "No")) %>%
+  mutate(variable = toupper(variable))
+  
+# Write out results
+write.xlsx(hc_ss_results_table, "2_OutputTables/HC_SS_Stats_Res.xlsx")
+```
+
