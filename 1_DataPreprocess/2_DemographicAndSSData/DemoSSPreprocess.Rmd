@@ -1,0 +1,531 @@
+---
+title: "Demographic and Social Stressor Data Preprocessing"
+author: "Elise Hickman"
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_depth: 6
+    number_sections: false
+---
+
+# Script Summary
+
+Script within this file was used to:
+
++ Clean demographics data
++ Generate the demographics table (Table S2)
++ Clean and imput social stressor data
++ Identify outliers in social stressor data (Figure S3)
+
+# Set up workspace
+
+```{r message = FALSE, warning = FALSE}
+# Clear global environment
+rm(list=ls())
+
+# Load packages
+library(tidyverse) # for data organization and manipulation
+library(janitor) # for data cleaning
+library(openxlsx) # for writing out files
+library(DT) # for displaying tables
+library(table1) # for making tables
+library(pcaMethods) # for PCA outlier detection with missing values
+library(factoextra) # for PCA outlier detection
+library(missForest) # for imputation
+library(patchwork) # for graphing
+library(pheatmap) # for heatmaps
+select <- dplyr::select
+rename <- dplyr::rename
+recode <- dplyr::recode 
+
+# Set theme
+theme_set(theme_bw())
+
+# Set working directory
+setwd("~/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects_Lead/5_BEEWristband_Postpartum_ChemSS/4_Analyses/1_CurrentAnalyses/1_DataPreprocess/2_DemographicAndSSData")
+```
+
+# Import data
+
+For this and following analyses, ss_data will refer to social stressor data. Initially, this also includes demographic information, but that will be filtered out below.
+
+```{r}
+ss_data <- data.frame(read.csv(file = "1_InputData/NonChemicalData.csv")) %>%
+  clean_names() %>%
+  rename("S_ID" = "s_id")
+```
+
+We will import the chemical data just to extract the participants that we want to keep/focus on. 
+```{r}
+# Chemical data
+wb_data <- read.xlsx("1_InputData/ChemicalData_Filtered_Imp_TW.xlsx")
+
+# Extract participant IDs
+participant_IDs <- wb_data$S_ID
+```
+
+# Clean demographic data
+
+Demographic columns that contained duplicate information were removed and sex, race, and ethnicity data were recoded to be more descriptive and streamlined. For example, the degree category was collapsed based on the highest degree completed (e.g., Bachelor's Degree Plus Additional Training was changed to Bachelor's Degree), and race/ethnicity categories were collapsed such that any indication of biracial overrode other indicated race, and Latino and Hispanic were combined into one category. 
+
+```{r}
+# Data cleaning
+demo <- ss_data %>%
+  filter(S_ID %in% participant_IDs) %>%
+  select(S_ID:pc_ed) %>%
+  select(-c(tc_age_days_t18, ga_days_t18, pc_matage_t18, 
+            remote_t6, tc_age_days_t6, ga_days_t6, pc_matage_t6, tc_age_months_t18)) %>%
+  rename("child_age_months" = "tc_age_months_t6",
+         "mat_age_birth" = "pc_mat_agebirth",
+         "child_gest_age_birth" = "ga_days_birth") %>%
+  mutate(across(tc_female:pc_ed, as.character)) %>%
+  mutate(tc_female = recode(tc_female, "0" = "M", "1" = "F")) %>%
+  rename("child_sex" = "tc_female") %>%
+  mutate(pc_sex = recode(pc_sex, "0" = "F", "1" = "M"),
+         pc_gender = recode(pc_gender, "0" = "Woman", "1" = "Man", "2" = "Trans", "3" = "Genderqueer", "4" = "Other"),
+         pc_latino = recode(pc_latino, "0" = "No", "1" = "MexicanChicano", "2" = "PuertoRican", "3" = "Cuban", "4" = "Other"),
+         pc_latino = case_when(pc_latino == "No" ~ "No", .default = "Yes"),
+         pc_race = recode(pc_race, "0" = "White", "1" = "Black", "2" = "IndigenousAmerican", 
+                          "3" = "AsianIndian", "4" = "Chinese", "5" = "Japanese", "6" = "Korean", 
+                          "7" = "Vietnamese", "8" = "OtherAsian", "9" = "Other"),
+         pc_biracial = recode(pc_biracial, "0" = "No", "1" = "Yes"),
+         pc_addrace = recode(pc_addrace, "0" = "White", "1" = "Black", "2" = "IndigenousAmerican", 
+                             "3" = "AsianIndian", "4" = "Chinese", "5" = "Japanese", "6" = "Korean", 
+                             "7" = "Vietnamese", "8" = "OtherAsian", "9" = "Other"),
+         pc_race_black = recode(pc_race_black, "0" = "No", "1" = "Yes"),
+         pc_ed = recode(pc_ed, "12" = "High School or GED", "13" = "High School or GED", "14" = "Associate Degree", 
+                        "15" = "Associate Degree", "16" = "Four-Year Degree", "17" = "Four-Year Degree", 
+                        "18" = "Master's Degree", "19" = "Professional Degree or PhD")) %>%
+  select(-c(pc_race_black)) %>%
+  mutate(pc_latino_hispanic = case_when(pc_latino == "Yes" ~ "Yes",
+                                        pc_race_other == "Hispanic" ~ "Yes",
+                                        pc_race_other == "Medican" ~ "Yes",
+                                        pc_race_other == "Latina" ~ "Yes",
+                                        .default = "No"),
+         pc_multiracial_cleaned = case_when(pc_race_other == "biracial" ~ "Yes",
+                                            pc_race_other == "multi" ~ "Yes",
+                                            pc_biracial == "Yes" ~ "Yes",
+                                            .default = "No"),
+         pc_race_cleaned = case_when(pc_multiracial_cleaned == "Yes" ~ "Biracial/Multiracial",
+                                     pc_race == "White" ~ "White",
+                                     pc_race == "Black" ~ "Black",
+                                     pc_race == "Chinese" ~ "Other",
+                                     pc_race == "Other" ~ "Other"),
+         pc_race_full = case_when(pc_multiracial_cleaned == "Yes" ~ "Biracial/Multiracial",
+                                  pc_race == "White" ~ "White",
+                                  pc_race == "Black" ~ "Black",
+                                  pc_race == "Chinese" ~ "Other",
+                                  pc_race == "Other" ~ pc_race_other)) %>%
+  mutate_at("pc_race_full", na_if,"") %>%
+  mutate(pc_race_full = replace_na(pc_race_full, "Other")) %>%
+  select(-c(pc_latino:pc_race_other, pc_multiracial_cleaned))
+```
+
+Relationship status data needed different cleaning because if the participant was in the same romantic relationship as they were in at the prenatal visit, many of the questions are skipped.
+```{r}
+# Filter for just relationship data
+relationship_demo <- ss_data %>%
+  filter(S_ID %in% participant_IDs) %>%
+  select(c(S_ID, starts_with("rel")))
+
+# Filter to subjects who are not in a relationship
+relationship_demo_no <- relationship_demo %>%
+  filter(rel1_t6 == 0) %>%
+  mutate(relationship = "None") %>%
+  select(c(S_ID, relationship)) %>%
+  mutate("Total Years with Partner" = NA)
+
+relationship_demo_no_IDs <- relationship_demo_no$S_ID 
+
+# Filter to subjects who indicated they were in a relationship
+relationship_demo_yes <- relationship_demo %>%
+  filter(!S_ID %in% relationship_demo_no_IDs)
+
+# Filter to subjects who indicated they were in a relationship and this has not changed since t0  (changing NAs to 3 so they will be treated properly)
+relationship_demo_yes_same <- relationship_demo_yes %>%
+   mutate(rel_new_t6 = replace_na(rel_new_t6, 3)) %>%
+  filter(rel_new_t6 == 0 | rel_new_t6 == 3) %>%
+  mutate(relationship = ifelse(rel2_t0 == 1, "Yes and Live Together", "Yes and Do Not Live Together")) %>%
+  mutate(relationship = replace_na(relationship, "Yes (Unclear Living Status)")) %>%
+  relocate(relationship, .after = "S_ID") %>%
+  select(c(S_ID, relationship, rel_ttl_yrs_wpartner_t0)) %>%
+  rename("Total Years with Partner" = "rel_ttl_yrs_wpartner_t0")
+
+# Filter to subjects who indicated that their relationship has changed since t0
+relationship_demo_yes_diff <- relationship_demo_yes %>%
+  filter(rel_new_t6 == 1) %>%
+  mutate(relationship = ifelse(rel2_t0 == 1, "Yes and Live Together", "Yes and Do Not Live Together")) %>%
+  mutate(relationship = replace_na(relationship, "Yes (Unclear Living Status)")) %>%
+  relocate(relationship, .after = "S_ID") %>%
+  select(c(S_ID, relationship, rel_ttl_yrs_wpartner_t6)) %>%
+  rename("Total Years with Partner" = "rel_ttl_yrs_wpartner_t6")
+
+# Combine back data frames
+relationship_demo_cleaned <- bind_rows(relationship_demo_no, relationship_demo_yes_diff, relationship_demo_yes_same)
+
+# Combine relationship data with existing data
+demo <- left_join(demo, relationship_demo_cleaned, by = "S_ID") %>%
+  rename("yrs_with_part" = "Total Years with Partner")
+
+# Re-level variables
+demo$pc_race_cleaned <- factor(demo$pc_race_cleaned, 
+                               levels=c("White", "Black", "Biracial/Multiracial", "Other"))
+
+demo$pc_latino_hispanic <- factor(demo$pc_latino_hispanic, 
+                               levels=c("No", "Yes"))
+
+demo$pc_ed <- factor(demo$pc_ed, 
+                               levels=c("High School or GED", "Associate Degree", "Four-Year Degree", 
+                                        "Master's Degree","Professional Degree or PhD"))
+
+
+demo$relationship <- factor(demo$relationship, 
+                               levels=c("Yes and Live Together", "Yes and Do Not Live Together", "Yes (Unclear Living Status)", 
+                                        "None"))
+
+datatable(demo)
+```
+
+Write out data:
+```{r}
+write.xlsx(demo, "2_OutputData/Demographic_Data_Cleaned.xlsx")
+```
+
+
+# Make demographics table
+
+Return to making demographics table. Will manually change "Missing" under years together to only reflect those who are in a relationship (subtract the 7 who are not in a relationship).
+
+```{r}
+# Create new labels for the demographics table
+label(demo$mat_age_birth) <- "Age at Childbirth"
+label(demo$pc_latino_hispanic) <- "Latino or Hispanic"
+label(demo$pc_race_cleaned) <- "Race"
+label(demo$pc_ed) <- "Educational Attainment"
+label(demo$relationship) <- "Relationship Status"
+label(demo$yrs_with_part) <- "Years with Partner"
+
+# Create function for custom table so that Mean (SD) is shown for continuous variables
+my.render.cont <- function(x) {
+  with(stats.apply.rounding(stats.default(x), digits=2), c("",
+                                                           "Mean (SD)"=sprintf("%s (&plusmn; %s)", MEAN, SD)))
+}
+
+# Make table of demographics.
+table1(~ mat_age_birth + pc_race_cleaned + pc_latino_hispanic + pc_ed + relationship + yrs_with_part, 
+       data = demo, 
+       render.continuous = my.render.cont)
+```
+
+Demographics table with "Other" category expanded for greater clarification:
+```{r}
+table1(~pc_race_full, data = demo, render.continuous = my.render.cont)
+```
+
+
+# Cleaning Social Stressor Data
+
+## Organize data for imputation
+
+```{r}
+# Remove demographic data and select only subjects in the 6-month cohort
+ss_data <- ss_data %>%
+  select(-c(tc_age_months_t18:rel1_t0)) %>%
+  filter(S_ID %in% participant_IDs) %>%
+  mutate(S_ID = as.character(S_ID))
+
+# Split out data by time point and clean data.
+
+# HC data will be treated differently, as data are not missing at random. Participants with shorter and more kinky hair are more likley to have missing data here, so this will be approached as a subset analysis.
+ss_data_hc <- ss_data %>%
+  select(c(S_ID, pc_hair_hcc_t0))
+
+write.xlsx(ss_data_hc, "2_OutputData/Hair_Cortisol_Data.xlsx")
+
+# From prenatal data, we will use only CPSQ, RACD, and HC, as other metrics were duplicated at the 6-month visit. 
+ss_data_0 <- ss_data %>%
+  select(c(S_ID, ends_with("t0"))) %>%
+  rename_with(~ str_remove(., "_t0")) %>%
+  select(S_ID, starts_with("cpsq"), starts_with("racd"))
+
+# Remove summary variables and ensure that data are numeric. 
+ss_data_0_forimp <- ss_data_0 %>%
+  select(-c(cpsq_mean:cpsq_anx, 
+            racd_all:racdin)) %>%
+  mutate(across(cpsq1:racd13, \(x) as.numeric(x)))
+
+# Repeat for 6-month data
+ss_data_6 <- ss_data %>%
+  select(c(S_ID, ends_with("t6"))) %>%
+  rename_with(~ str_remove(., "_t6")) %>%
+  rename_with(.cols = c(adults_hh:income2needs_cat), .fn = function(.x) {paste0("hhi_", .x)}) %>%
+  select(S_ID, starts_with("psi"), starts_with("bsi"), starts_with("esq"), starts_with("cts"), starts_with("crs"), starts_with("hhi"))
+
+ss_data_6_forimp <- ss_data_6 %>%
+  select(-c(psi_mn:psi_in, bsi_dep:bsi_psdi, esq_all:esq_in, cts_rv_agg:cts_in, 
+            crs_agree:crs_in, hhi_adults_hh:hhi_total_hh, hhi_income2needs_ge1:hhi_income2needs_cat)) %>%
+  mutate(across(psi1:crs16r, \(x) as.numeric(x)))
+  
+# Merge data frame back together
+ss_data_forimp <- left_join(ss_data_0_forimp, ss_data_6_forimp, by = "S_ID") %>%
+  column_to_rownames("S_ID")
+```
+
+Write out raw data for Dataverse:
+```{r}
+write.xlsx(ss_data_forimp %>%
+  rownames_to_column("S_ID"), "2_OutputData/SS_Data_Raw.xlsx")
+```
+
+Quantify missingness for reporting in manuscript:
+```{r}
+# Number of data points total
+97*164
+
+# What is the total number of missing values?
+sum(is.na(ss_data_forimp) == TRUE)
+
+# What percentage of values are missing?
+1220/15908*100
+
+# Group by participant and questionnaire to assess missingness
+ss_data_missing_summary <- ss_data_forimp %>% 
+  t() %>% data.frame() %>%
+  rownames_to_column("question") %>%
+  mutate(question = gsub('[[:digit:]].*', '', question)) %>%
+  separate(question, into = c("question", NA), sep = "_") %>%
+  group_by(question) %>%
+  summarise(across(everything(), \(x) sum(is.na(x))))
+
+# How many participants had missing data?
+ss_data_missing_partsum <- ss_data_missing_summary %>%
+  column_to_rownames("question") %>%
+  t() %>% data.frame() %>%
+  mutate(sum = rowSums(.))
+
+nrow(ss_data_missing_partsum %>% filter(sum != 0))
+```
+
+
+## Impute data with missForest
+
+```{r warning = FALSE}
+set.seed(946)
+ss_data_imp <- missForest(ss_data_forimp)$ximp
+```
+
+## Recalculate summary variables
+```{r}
+ss_data_imp_summ_vars <- ss_data_imp %>%
+  
+  # Round data
+  mutate_if(is.numeric, round, 4) %>%
+  
+  # CPSQ
+  select(-c(cpsq4, cpsq5, cpsq7, cpsq8)) %>%
+  mutate(cpsq_mean = rowMeans(across(cpsq1:cpsq10))) %>%
+  mutate(cpsq_help = rowMeans(across(c(cpsq1, cpsq2, cpsq3, cpsq6, cpsq9, cpsq10)))) %>%
+  mutate(cpsq_anx = rowMeans(across(c(cpsq4r, cpsq5r, cpsq7r, cpsq8r)))) %>%
+  
+  # RACD
+  mutate(racd_all = rowMeans(across(racd1:racd13))) %>%
+  mutate(racd_nozero = rowSums(across(racd1:racd13) != 0)) %>%
+  
+  # PSI
+  select(-c(psi22, psi32, psi33)) %>%
+  mutate(psi_mn = rowMeans(across(psi1:psi36))) %>%
+  mutate(psi_pd = rowMeans(across(psi1:psi12))) %>%
+  mutate(psi_pcdi = rowMeans(across(psi13:psi24))) %>%
+  mutate(psi_dc = rowMeans(across(psi25:psi36))) %>%
+  
+  # BSI 
+  mutate(bsi_som = rowMeans(across(c(bsi1, bsi4, bsi7, bsi10, bsi13, bsi16)))) %>%
+  mutate(bsi_dep = rowMeans(across(c(bsi2, bsi5, bsi8, bsi11, bsi14, bsi17)))) %>%
+  mutate(bsi_anx = rowMeans(across(c(bsi3, bsi6, bsi9, bsi12, bsi15, bsi18)))) %>%
+  mutate(bsi_hos = rowMeans(across(c(bsi19, bsi20, bsi21, bsi22, bsi23)))) %>%
+  mutate(bsi_gsi = rowMeans(across(bsi1:bsi23))) %>%
+  mutate(bsi_psp = rowSums(across(bsi1:bsi23) != 0)/23) %>%
+  mutate(across(bsi1:bsi23, ~na_if(., 0))) %>%
+  mutate(bsi_psdi =  rowMeans(across(bsi1:bsi23), na.rm = TRUE)) %>%
+  mutate(bsi_psdi = replace(bsi_psdi, is.nan(bsi_psdi), 0)) %>%
+  mutate(bsi_psdi_psp = ifelse(bsi_psp != 0, bsi_psdi/bsi_psp, 0)) %>%
+  mutate(across(bsi1:bsi23, ~replace_na(., 0))) %>%
+  
+  # ESQ
+  mutate(esq_bill_scale = esq_bill*0.75) %>%
+  mutate(esq_end_scale = esq_end*0.75) %>%
+  mutate(esq_all = rowMeans(across(c(esq_bill_scale, esq_end_scale, esq_home:esq_med_ca)))) %>%
+  select(-c(esq_bill_scale, esq_end_scale)) %>%
+  
+  # CTS
+  mutate(cts_rv_agg = rowMeans(across(cts4a:cts10a))) %>%
+  mutate(cts_pv_agg = rowMeans(across(cts4b:cts10b))) %>%
+  mutate(cts_ev_agg = rowMeans(across(cts4c:cts10c))) %>%
+  mutate(cts_rv_viol = rowMeans(across(cts11a:cts19a))) %>%
+  mutate(cts_pv_viol = rowMeans(across(cts11b:cts19b))) %>%
+  mutate(cts_ev_viol = rowMeans(across(cts11c:cts19c))) %>%
+  
+  # CRS
+  select(-c(crs1, crs2, crs6, crs8, crs9, crs10, crs11, crs15, crs16)) %>%
+  mutate(crs_mean = rowMeans(across(c(crs3, crs4, crs5, crs6r, crs7, crs8r, crs9r, crs10r, crs11r, crs12, crs13, crs14, crs15r, crs16r))))
+```
+
+## Detect outliers
+
+### BPCA - with missing values
+
+```{r}
+# Run Bayesian PCA
+bpca <- pca(ss_data_forimp, method = "bpca", nPcs = 60)
+
+# Extract scores
+bpca_scores <- data.frame(scores(bpca))
+
+# Determine if there are any outliers > 6 SD from the mean
+bpca_outliers <- apply(bpca_scores, 2, function(x) which( abs(x - mean(x)) > (6 * sd(x)) )) %>%
+        Reduce(union, .)
+
+# Get percentage contribution to each axis
+bpca_loadings <- data.frame(bpca@R2)
+
+# Make plot for supplement
+bpca_plot <- ggplot(bpca_scores, aes(x = PC1, y = PC2)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "black", size = 0.5) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 0.5) +
+  geom_point(size = 2) +
+  labs(x = "Dim1 (21.9%)", y = "Dim2 (8.4%)", title = "Bayesian PCA with Missing Values") +
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(face = "bold", size = rel(1.1)),
+        plot.title = element_text(hjust = 0.5))
+
+bpca_plot
+```
+
+
+### Standard PCA - with imputed values
+
+```{r warning = FALSE}
+# Filter and scale data frame
+ss_data_for_clustering <- ss_data_imp_summ_vars %>% scale() %>% data.frame() %>% select_if(~ !any(is.na(.)))
+
+# Run PCA
+pca <- prcomp(ss_data_for_clustering)
+
+# Create a scoring funciton to detect PCA sample outliers. The input is PCA results data frame and the number of standard deviations for the cutoff. The output is outlier names. 
+outlier_detection = function(pca_df, sd){
+
+    # getting scores
+    scores = pca_df$x
+    
+    # identifying samples that are > 6 standard deviations away from the mean
+    outlier_indices = apply(scores, 2, function(x) which( abs(x - mean(x)) > (sd * sd(x)) )) %>%
+        Reduce(union, .)
+    
+    # getting sample names
+    outliers = rownames(scores)[outlier_indices]
+    
+    return(outliers)
+}
+
+# Call function with different standard deviation cutoffs
+outliers_6 <- outlier_detection(pca, 6)
+
+ss_for_pca <- ss_data_for_clustering %>%
+  rownames_to_column("S_ID") %>%
+  mutate("Outlier Cutoff" = ifelse(S_ID %in% outliers_6, "6 SD Outlier", "Not Outlier")) %>%
+  column_to_rownames("S_ID") %>%
+  mutate(`Outlier Cutoff` = fct_relevel(`Outlier Cutoff`, c ("Not Outlier", "6 SD Outlier")))
+
+# Graph PCA with outliers
+PCA_outliers_plot <- fviz_pca_ind(pca, 
+             label = "none",
+             habillage = ss_for_pca$`Outlier Cutoff`,
+             palette = c("gray12", "#CC3333"),
+             mean.point = FALSE,
+             pointsize = 3) +
+  scale_shape_manual(values = c(20, 20, 20, 20)) +
+  labs(title = "Standard PCA with Imputed Values") +
+theme(axis.title = element_text(face = "bold", size = rel(1.1)),
+      panel.border = element_rect(fill = NA, color = "black", size = 0.3),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_blank(),
+      plot.title = element_text(hjust = 0.5))
+
+PCA_outliers_plot
+
+# Graph PCA without outlier point
+ss_for_pca_outrem <- ss_data_for_clustering %>%
+  rownames_to_column("S_ID") %>%
+  filter(S_ID != 1169) %>%
+  column_to_rownames("S_ID")
+
+pca <- prcomp(ss_for_pca_outrem)
+
+PCA_outliers_plot_outrem <- fviz_pca_ind(pca, 
+             label = "none",
+             mean.point = FALSE,
+             pointsize = 1.75) +
+  scale_shape_manual(values = c(20, 20, 20, 20)) +
+  labs(title = "Standard PCA with Imputed Values") +
+theme(axis.title = element_text(face = "bold", size = rel(1.1)),
+      panel.border = element_rect(fill = NA, color = "black", size = 0.3),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_blank(),
+      plot.title = element_text(hjust = 0.5))
+
+PCA_outliers_plot_outrem
+```
+
+Create final figure panel for supplement:
+```{r}
+ss_outlier_det <- bpca_plot + PCA_outliers_plot + PCA_outliers_plot_outrem +
+  plot_layout(widths = c(3.9, 4, 3.9)) +
+  plot_annotation(tag_levels = 'A') & 
+  theme(plot.tag = element_text(face = "bold", size = 18))
+
+pdf(file = "3_OutputFigs/SS_Outlier_Removal.pdf",
+    height = 4.5, 
+    width = 15)
+
+ss_outlier_det
+
+invisible(dev.off())
+
+ss_outlier_det
+```
+
+
+### Heatmap
+
+With missing values:
+```{r}
+# Prepare heatmap - remove rows with close to zero variance
+ss_data_hm <- ss_data_imp[,-nearZeroVar(ss_data_imp)]
+
+# Make heatmap
+ss_data_outlier_hm <- pheatmap(as.matrix(ss_data_hm), 
+                               scale = "column",
+                               color = colorRampPalette(c("#FDE0C5", "#F59E72", "#EB4A40"))(50),
+                               show_colnames = FALSE,
+                               show_rownames = FALSE)
+
+ss_data_outlier_hm
+
+pdf("3_OutputFigs/Outlier_Heatmap.pdf",
+    width = 10, height = 4)
+ss_data_outlier_hm
+invisible(dev.off())
+
+```
+
+
+Export data:
+```{r}
+# Filter outlier subject
+ss_data_cleaned <- ss_data_imp_summ_vars %>%
+  rownames_to_column("S_ID") 
+
+write.xlsx(ss_data_cleaned, "2_OutputData/SS_Data_Cleaned.xlsx")
+```
