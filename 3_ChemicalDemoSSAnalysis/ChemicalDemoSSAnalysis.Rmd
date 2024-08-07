@@ -40,7 +40,7 @@ library(ggh4x) # for graphing
 theme_set(theme_bw())
 
 # Set working directory
-setwd("/Users/ehickman/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects/2023/BEE_Wristband_Project/4_Analyses/1_CurrentAnalyses/3_ChemicalDemoSSAnalysis")
+setwd("~/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects_Lead/5_BEEWristband_Postpartum_ChemSS/4_Analyses/1_CurrentAnalyses/3_ChemicalDemoSSAnalysis")
 ```
 
 # Import data
@@ -78,11 +78,11 @@ chemical_key <- read.xlsx("1_InputData/Minimum Detection Levels.xlsx", colNames 
 
 # Chemical exposure + demographics
 
-Prior to analyzing the data, race will be collapsed into white and non-white, and we will join chemical data to demographic data. 
+Race will be collapsed into 1) Four groups (White, Black, Biracial/Multiracial, Other) or 2) White and non-white, and we will join chemical data to demographic data. For 
 
 ```{r}
 chem_demo <- left_join(wb_log2, demo, by = "S_ID") %>%
-  mutate(race_forstats = case_when(pc_race_cleaned == "White" ~ "White",
+  mutate(pc_race_cleaned_twogroup = case_when(pc_race_cleaned == "White" ~ "White",
                                    .default = "Non-White"))
 ```
 
@@ -183,14 +183,41 @@ part_correlation_spearman_cleaned <- part_correlation_spearman %>%
 nrow(part_correlation_spearman %>% filter(abs(r) >= 0.6 & p < 0.05))
 ```
 
-### Race
+### Race - Multigroup
+
+```{r}
+# Run overall statistical test
+race_kruskal_res <- chem_demo %>% 
+  select(c(alkylOPE_2IPPDPP:Phthal_TOTM, pc_race_cleaned)) %>%
+  mutate(pc_race_cleaned = factor(pc_race_cleaned, levels = c("White", "Black", "Biracial/Multiracial", "Other"))) %>%
+  pivot_longer(!pc_race_cleaned, names_to = "Variable", values_to = "Value") %>%
+  group_by(Variable) %>%
+  do(tidy(kruskal.test(x = .$Value, g = .$pc_race_cleaned))) %>%
+  dplyr::select(c(Variable, p.value)) %>%
+  rename("pval_race_multigroup" = "p.value", "class_chemical" = "Variable")
+
+# Add p-adj
+race_kruskal_res$padj_race_multigroup = p.adjust(race_kruskal_res$pval_race_multigroup, method = "BH")
+
+
+# How many with BH p-value < 0.1?
+nrow(race_kruskal_res %>% filter(padj_race_multigroup < 0.1))
+
+# How many with BH p-value < 0.05?
+nrow(race_kruskal_res %>% filter(padj_race_multigroup < 0.05))
+
+# How many with p-value < 0.05?
+nrow(race_kruskal_res %>% filter(pval_race_multigroup < 0.05))
+```
+
+### Race - Two Group
 
 ```{r}
 # Create a list of column names (chemicals) to run the analysis on
 endpoints <- colnames(chem_demo %>% select(c(alkylOPE_2IPPDPP:Phthal_TOTM))) 
 
 # Create data frame to store results
-race_wilcoxres <- data.frame()
+race_wilcoxres_twogroup <- data.frame()
 
 # Run for loop
 for (i in 1:length(endpoints)) {
@@ -199,24 +226,24 @@ for (i in 1:length(endpoints)) {
   endpoint <- endpoints[i]
   
   # Run wilcox test and store in results data frame.
-  res <- wilcox.test(as.formula(paste0(endpoint, "~ race_forstats", sep = "")), 
+  res <- wilcox.test(as.formula(paste0(endpoint, "~ pc_race_cleaned_twogroup", sep = "")), 
                      data = chem_demo)
   
   res_df <- data.frame(res$p.value) %>% 
     rename("pval" = "res.p.value") %>%
     mutate("class_chemical" = endpoint)
   
-  race_wilcoxres <- rbind(race_wilcoxres, res_df)
+  race_wilcoxres_twogroup <- rbind(race_wilcoxres_twogroup, res_df)
 }
 
 # Clean data frame
-race_wilcoxres <- race_wilcoxres %>%
+race_wilcoxres_twogroup <- race_wilcoxres_twogroup %>%
   relocate(class_chemical, .before = pval) %>%
   mutate(padj = p.adjust(pval, method = "BH")) %>%
-  rename("pval_race" = "pval", "padj_race" = "padj")
+  rename("pval_race_twogroup" = "pval", "padj_race_twogroup" = "padj")
 
 # How many chemicals with padj < 0.1?
-nrow(race_wilcoxres %>% filter(padj_race < 0.1))
+nrow(race_wilcoxres_twogroup %>% filter(padj_race_twogroup < 0.1))
 ```
 
 ### Latino/non-latino
@@ -268,6 +295,7 @@ edu_kruskal_res$padj = p.adjust(edu_kruskal_res$p.value, method = "BH")
 # Rename p-value and chemical class column
 edu_kruskal_res <- edu_kruskal_res %>% 
   rename("class_chemical" = "Variable", "pval_edu" = "p.value", "padj_edu" = "padj")
+
 ```
 
 ### Export results
@@ -276,11 +304,11 @@ Supplemental table:
 ```{r}
 # Make list of data frames to merge
 univar_stats_res <- list(age_correlation_spearman_cleaned, part_correlation_spearman_cleaned, 
-                         race_wilcoxres, latino_wilcoxres, edu_kruskal_res)
+                         race_kruskal_res, race_wilcoxres_twogroup, latino_wilcoxres, edu_kruskal_res)
 
 # Combine data frames 
 univar_stats_res <- univar_stats_res %>%
-  reduce(full_join, by = "class_chemical")
+  purrr::reduce(full_join, by = "class_chemical")
 
 # Clean data frame
 univar_stats_res <- univar_stats_res %>%
@@ -292,21 +320,25 @@ univar_stats_res <- univar_stats_res %>%
 write.xlsx(univar_stats_res, "2_OutputTables/Univariate_Stats_Res.xlsx")
 ```
 
-Race figure panel:
+### Graphing race results
+
+#### Two Group Figure Panel
+
+For two group figure panel (supplement):
 ```{r}
 # Select chemicals that have padj < 0.1 for race
-race_chems <- race_wilcoxres %>% filter(padj_race < 0.1) %>% pull(class_chemical)
+race_chems_twogroup <- race_wilcoxres_twogroup %>% filter(padj_race_twogroup < 0.1) %>% pull(class_chemical)
 
 # Prepare p-values 
-race_chems_pvals <- race_wilcoxres %>%
-  filter(padj_race < 0.1) %>%
-  mutate(padj_race = ifelse(padj_race > 0.001, round(padj_race, digits = 3), format(padj_race, digits = 3))) %>%
-  mutate(padj_race = paste("p = ", padj_race, sep = ""))
+race_chems_twogroup_pvals <- race_wilcoxres_twogroup %>%
+  filter(padj_race_twogroup < 0.1) %>%
+  mutate(padj_race_twogroup = ifelse(padj_race_twogroup > 0.001, round(padj_race_twogroup, digits = 3), format(padj_race_twogroup, digits = 3, scientific = TRUE))) %>%
+  mutate(padj_race_twogroup = paste("p = ", padj_race_twogroup, sep = ""))
 
 # Prepare y values for graphing the p-values. Note that this had to be through trial and error of different expansion factors
 # Due to different scales and variability within each chemical
-race_chems_heights <- chem_demo %>%
-  select(all_of(race_chems)) %>%
+race_chems_twogroup_heights <- chem_demo %>%
+  select(all_of(race_chems_twogroup)) %>%
   summarise(across(everything(), max)) %>%
   t() %>% as.data.frame() %>%
   rownames_to_column("class_chemical") %>%
@@ -314,42 +346,127 @@ race_chems_heights <- chem_demo %>%
   mutate(pval_y = ifelse(class_chemical %in% c("Pest_Chlorpyrifos", "Pest_Cypermethrin", "Pest_Fipronil"), max_y*20, max_y*1.5))
 
 # Merge together pvalues and heights
-race_chems_pval_labels <- left_join(race_chems_pvals, race_chems_heights, by = "class_chemical") %>%
+race_chems_twogroup_pval_labels <- left_join(race_chems_twogroup_pvals, race_chems_twogroup_heights, by = "class_chemical") %>%
   separate(class_chemical, into = c(NA, "chemical"))
 
 # Prepare data frame for graphing
-chem_demo_racegraphing <- chem_demo %>%
-  select(c(all_of(race_chems), race_forstats, S_ID)) %>%
-  pivot_longer(-c(race_forstats, S_ID), names_to = "class_chemical", values_to = "Value") %>%
+race_graph_input_twogroup <- chem_demo %>%
+  select(c(all_of(race_chems_twogroup), pc_race_cleaned_twogroup, S_ID)) %>%
+  pivot_longer(-c(pc_race_cleaned_twogroup, S_ID), names_to = "class_chemical", values_to = "Value") %>%
   left_join(chemical_key, by = "class_chemical") %>%
   mutate(chemical = gsub("cypermethrin", "Cypermethrin", chemical)) %>%
-  mutate(race_forstats = fct_relevel(factor(race_forstats), c("White", "Non-White"))) 
+  mutate(pc_race_cleaned_twogroup = dplyr::recode(pc_race_cleaned_twogroup, "White" = "W", "Non-White" = "Bl/Bi/M/O")) %>%
+  mutate(pc_race_cleaned_twogroup = fct_relevel(factor(pc_race_cleaned_twogroup), c("W", "Bl/Bi/M/O"))) 
 
-chem_demo_race_graph <- ggplot() +
-  geom_boxplot(chem_demo_racegraphing, 
-               mapping = aes(x = race_forstats, y = Value, color = race_forstats), outlier.shape = NA) +
-  geom_jitter(chem_demo_racegraphing, 
-              mapping = aes(x = race_forstats, y = Value, color = race_forstats), size = 0.75, width = 0.1, height = 0.1) +
+race_graph_twogroup <- ggplot() +
+  geom_boxplot(race_graph_input_twogroup, 
+               mapping = aes(x = pc_race_cleaned_twogroup, y = Value, color = pc_race_cleaned_twogroup), outlier.shape = NA) +
+  geom_jitter(race_graph_input_twogroup, 
+              mapping = aes(x = pc_race_cleaned_twogroup, y = Value, color = pc_race_cleaned_twogroup), size = 0.75, width = 0.1, height = 0.1) +
   scale_color_manual(values = c("#9CCB86", "#4F90A6")) +
   scale_y_log10(expand = expansion(mult = c(0, 0.2)), labels = function(x) format(x, scientific = TRUE)) +
   theme(axis.title.x = element_blank(),
-        axis.title.y = element_text(margin = margin(t = 0, r = 10, b = 0, l = 0)),
+        axis.title.y = element_text(margin = ggplot2::margin(t = 0, r = 10, b = 0, l = 0)),
         legend.position = "none",
         strip.background = element_rect(fill ="gray25"),
         strip.text = element_text(color = "white", size = 12)) +
   labs(y = "Chemical Concentration (Log2(TWA ng/g))") +
-  geom_text(data = race_chems_pval_labels, mapping = aes(x = 1.5, y = pval_y, label = padj_race)) +
+  geom_text(data = race_chems_twogroup_pval_labels, mapping = aes(x = 1.5, y = pval_y, label = padj_race_twogroup)) +
   facet_wrap(~chemical, nrow = 2, scales = "free_y")
 
-chem_demo_race_graph
+race_graph_twogroup
 
-pdf("3_OutputFigs/Chemical_Race_SigPanel.pdf",
+pdf("3_OutputFigs/Chemical_Race_SigPanel_TwoGroup.pdf",
     width = 8, height = 4.5)
-chem_demo_race_graph
+race_graph_twogroup
+invisible(dev.off())
+```
+
+#### Multigroup Figure Panel
+
+To make the race figure panel and to further understand results, we need to perform posthoc testing for pairwise group significance. We'll do this using the Dunn test.
+
+```{r}
+# Select only chemicals with unadjusted p < 0.05 for posthoc testing
+race_sig_chems_multigroup <- race_kruskal_res %>% 
+  filter(pval_race_multigroup < 0.05) %>%
+  pull("class_chemical")
+
+# Perform Dunn's test
+race_dunn_res <- chem_demo %>% 
+  select(c(all_of(race_sig_chems_multigroup), pc_race_cleaned)) %>%
+  pivot_longer(!pc_race_cleaned, names_to = "Variable", values_to = "Value") %>%
+  group_by(Variable) %>%
+  dunn_test(Value ~ pc_race_cleaned)
+
+# Filter results
+race_dunn_res_filtered <- race_dunn_res %>%
+  filter(Variable %in% race_sig_chems_multigroup) %>%
+  filter(p.adj < 0.05)
+
+# Further filter chemicals that have significant pairwise comparisons
+race_sig_chems_multigroup <- race_dunn_res_filtered %>%
+  pull("Variable") %>%
+  unique()
+```
+
+Next, plot these values:
+```{r}
+# Determine y values for significance annotations
+sig_labs_y <- chem_demo %>%
+  summarise(across(alkylOPE_2IPPDPP:Phthal_TOTM, \(x) max(x))) %>%
+  t() %>% as.data.frame() %>%
+  rownames_to_column("class_chemical") %>%
+  rename("y_pos" = "V1") %>%
+  mutate(y_pos = y_pos*1.4)
+
+# Clean up Dunn's test results
+race_dunn_res_forgraph <- race_dunn_res_filtered %>% 
+  rename("class_chemical" = "Variable") %>%
+  mutate(across(c(group1:group2), \(x) dplyr::recode(x, "White" = "W", "Black" = "Bl", "Biracial/Multiracial" = "Bi/M", "Other" = "O"))) %>%
+  left_join(sig_labs_y, by = "class_chemical") %>%
+  rename("y.position" = "y_pos") %>%
+  left_join(chemical_key, by = "class_chemical") %>%
+  mutate(chemical = gsub("cypermethrin", "Cypermethrin", chemical))
+
+# Prepare input dataframe for graphing individual points and box plots
+race_graph_input_multigroup <- chem_demo %>%
+  select(c(all_of(race_sig_chems_multigroup), pc_race_cleaned, S_ID)) %>%
+  pivot_longer(-c(pc_race_cleaned, S_ID), names_to = "class_chemical", values_to = "Value") %>%
+  left_join(chemical_key, by = "class_chemical") %>%
+  mutate(chemical = gsub("cypermethrin", "Cypermethrin", chemical)) %>%
+  mutate(pc_race_cleaned = dplyr::recode(pc_race_cleaned, "White" = "W", "Black" = "Bl", "Biracial/Multiracial" = "Bi/M", "Other" = "O")) %>%
+  mutate(pc_race_cleaned = fct_relevel(factor(pc_race_cleaned), c("W", "Bl", "Bi/M", "O")))
+
+# Make graph
+race_graph_multigroup <- ggplot() +
+  geom_boxplot(race_graph_input_multigroup, 
+               mapping = aes(x = pc_race_cleaned, y = Value, color = pc_race_cleaned), outlier.shape = NA) +
+  geom_jitter(race_graph_input_multigroup, 
+              mapping = aes(x = pc_race_cleaned, y = Value, color = pc_race_cleaned), size = 0.75, width = 0.1, height = 0.1) +
+  scale_color_manual(values = c("#9CCB86", "#4F90A6", "salmon2", "violetred")) +
+  scale_y_continuous(expand = expansion(mult = c(0.2, 0.4))) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_text(margin = ggplot2::margin(t = 0, r = 10, b = 0, l = 0), size = 12),
+        axis.text.x = element_text(size = 12),
+        legend.position = "none",
+        strip.background = element_rect(fill ="gray25"),
+        strip.text = element_text(color = "white", size = 12)) +
+  labs(y = "Chemical Concentration (Log2(TWA ng/g))") +
+  stat_pvalue_manual(race_dunn_res_forgraph, label = "p.adj.signif", size = 9, hide.ns = TRUE) +
+  facet_wrap(~chemical, nrow = 2, scales = "free_y")
+
+race_graph_multigroup
+
+pdf("3_OutputFigs/Chemical_Race_SigPanel_Multigroup.pdf",
+    width = 12, height = 6)
+race_graph_multigroup
 invisible(dev.off())
 ```
 
 ## All Variables Together - ANCOVA
+
+### Race - Two Group
 
 ```{r warning = FALSE}
 # Make cleaned data frame for ANCOVA
@@ -359,12 +476,12 @@ chem_demo_forancova <- chem_demo %>%
             child_sex, pc_sex, pc_gender, pc_race_cleaned, relationship, yrs_with_part))
 
 # Create empty data frame
-ANCOVAres_chem = data.frame("Variable" = c("(Intercept)", "mat_age_birth", "race_forstats", "pc_latino_hispanic", "pc_ed", "Residuals"))
+ANCOVAres_chem = data.frame("Variable" = c("(Intercept)", "mat_age_birth", "pc_race_cleaned_twogroup", "pc_latino_hispanic", "pc_ed", "Residuals"))
 
 # Perform ANCOVA over all columns
 for (i in 1:length(endpoints)) {
   
-  fit = aov(as.formula(paste0(names(chem_demo_forancova)[i], "~ mat_age_birth + race_forstats + pc_latino_hispanic +  pc_ed", sep = "")), chem_demo_forancova)
+  fit = aov(as.formula(paste0(names(chem_demo_forancova)[i], "~ mat_age_birth + pc_race_cleaned_twogroup + pc_latino_hispanic +  pc_ed", sep = "")), chem_demo_forancova)
   res <- data.frame(Anova(fit, type="III"))
   res <- subset(res, select = Pr..F.)
   names(res)[names(res) == 'Pr..F.'] <- noquote(paste0(names(chem_demo_forancova[i])))
@@ -396,12 +513,62 @@ ANCOVAres_cleaned <- ANCOVAres_chem %>%
   relocate(c(class, chemical), .before = "mat_age_birth")
 
 # Save results
-write.xlsx(ANCOVAres_cleaned, "2_OutputTables/ANCOVA_Res.xlsx")
+write.xlsx(ANCOVAres_cleaned, "2_OutputTables/ANCOVA_Res_TwoGroup.xlsx")
+```
+
+### Race - Multigroup
+
+```{r warning = FALSE}
+# Make cleaned data frame for ANCOVA
+chem_demo_forancova <- chem_demo %>%
+  column_to_rownames("S_ID") %>%
+  select(-c(child_age_months, child_gest_age_birth, 
+            child_sex, pc_sex, pc_gender, pc_race_cleaned_twogroup, relationship, yrs_with_part))
+
+# Create empty data frame
+ANCOVAres_chem = data.frame("Variable" = c("(Intercept)", "mat_age_birth", "pc_race_cleaned", "pc_latino_hispanic", "pc_ed", "Residuals"))
+
+# Perform ANCOVA over all columns
+for (i in 1:length(endpoints)) {
+  
+  fit = aov(as.formula(paste0(names(chem_demo_forancova)[i], "~ mat_age_birth + pc_race_cleaned + pc_latino_hispanic +  pc_ed", sep = "")), chem_demo_forancova)
+  res <- data.frame(Anova(fit, type="III"))
+  res <- subset(res, select = Pr..F.)
+  names(res)[names(res) == 'Pr..F.'] <- noquote(paste0(names(chem_demo_forancova[i])))
+  res <- res %>%
+  rownames_to_column("Variable")
+  
+  ANCOVAres_chem <- left_join(ANCOVAres_chem, res, by = "Variable")
+}
+
+# Clean data frame
+ANCOVAres_chem <- ANCOVAres_chem %>% 
+  column_to_rownames("Variable") %>%
+  t() %>% as.data.frame() %>%
+  select(-c("(Intercept)", "Residuals")) %>%
+  mutate(across(everything(), \(x) round(x, 6))) %>%
+  rownames_to_column("class_chemical")
+
+# Create adjusted p-values
+ANCOVAres_chem_adj <- ANCOVAres_chem %>%
+  mutate(across(!class_chemical, \(x) p.adjust(x, "BH"))) %>%
+  mutate(across(!class_chemical, \(x) round(x, 6))) %>%
+  rename_with( ~ paste0(.x, "_adj")) %>%
+  rename("class_chemical" = "class_chemical_adj")
+
+# Merge and clean data frames
+ANCOVAres_cleaned <- ANCOVAres_chem %>%
+  left_join(ANCOVAres_chem_adj, by = "class_chemical") %>%
+  left_join(chemical_key, by = "class_chemical") %>%
+  relocate(c(class, chemical), .before = "mat_age_birth")
+
+# Save results
+write.xlsx(ANCOVAres_cleaned, "2_OutputTables/ANCOVA_Res_Multigroup.xlsx")
 ```
 
 # Chemical exposure + social stress
 
-## K-means clustering
+## K-means clustering - with random forest imputed values
 
 Choose number of clusters:
 ```{r}
@@ -870,5 +1037,369 @@ table1(~ mat_age_birth + race_forstats + pc_latino_hispanic + pc_ed | cluster_k3
 
 # Run Fisher Test
 fisher.test(table(chem_demo_fortable$race_forstats, chem_demo_fortable$cluster_k3))
+```
+
+
+
+Graph isodecyl diphenyl phosphate (isodecylIPP), which had the only p-value that remained significant after p-value adjustment.
+```{r}
+# IDP graph
+cluster_ss_idp <- ggplot(wb_log2_sscluster, aes(x = cluster_k3, y = OPE_isodecylPP, 
+                                                color = cluster_k3, shape = cluster_k3)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 2, width = 0.1, height=0.1) +
+  scale_color_manual(values = c("#DDCC77", "#CC6677", "#88CCEE")) +
+  scale_shape_manual(values = c(16, 17, 15)) +
+  theme(legend.position = "none") +
+  labs(y = "Concentration (Log2(TWA ng/g))", x = "Cluster") +
+  scale_y_continuous(expand = expansion(mult = c(0.2, 0.5))) +
+   theme(axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 15),
+         axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 15),
+         axis.text.x = element_text(size = 13))
+
+pdf("3_OutputFigs/SS_Cluster_isodecylIPP.pdf",
+    width = 3, height = 4)
+cluster_ss_idp
+invisible(dev.off())
+
+cluster_ss_idp
+```
+
+Make figure panel of the chemicals with p < 0.1 to see if the pattern is the same across all chemicals:
+```{r}
+# Select chemicals with p < 0.1
+chems_for_panel <- cluster_kruskal_res %>%
+  filter(p.value < 0.05) %>%
+  pull("Variable")
+
+# Pivot data longer
+wb_log2_sscluster_forgraphing <- wb_log2_sscluster %>%
+  rownames_to_column("S_ID") %>%
+  filter(S_ID != "1169") %>%
+  column_to_rownames("S_ID") %>%
+  select(c(all_of(chems_for_panel), cluster_k3)) %>%
+  pivot_longer(!cluster_k3, names_to = "Chemical", values_to = "Value")
+
+cluster_ss_chem_panel <- ggplot(wb_log2_sscluster_forgraphing, aes(x = cluster_k3, y = Value, 
+                                                                   color = cluster_k3, shape = cluster_k3)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 0.75, width=0.1, height=0.1) +
+  scale_color_manual(values = c("#DDCC77", "#CC6677", "#88CCEE")) +
+  scale_shape_manual(values = c(16, 17, 15)) +
+  theme(legend.position = "none") +
+  labs(y = "Chemical Concentration (Log2(TWA ng/g))", x = "Cluster") +
+  facet_wrap(~Chemical, nrow = 3, scales = "free_y")
+
+cluster_ss_chem_panel
+```
+
+Write out simplified results table for the main figure in the manuscript:
+```{r}
+# Clean data
+cluster_kruskal_res_cleaned <- cluster_kruskal_res %>%
+  select(-padj) %>%
+  filter(p.value < 0.05) %>%
+  rename("class_chemical" = "Variable") %>%
+  left_join(chemical_key, by = "class_chemical") %>%
+  arrange(p.value) %>%
+  mutate(p.value = round(p.value, digits = 3))
+
+# Write out data
+write.xlsx(cluster_kruskal_res_cleaned, "2_OutputTables/Cluster_SS_Chem_KruskalRes_Cleaned.xlsx")
+```
+
+
+Write out more complete results table for supplement:
+```{r}
+# Clean pairwise data and pivot wider
+chem_cluster_dunn_res_trimmed_clean <- chem_cluster_dunn_res %>%
+  filter(.y. %in% chems_for_panel) %>%
+  rename("class_chemical" = ".y.") %>%
+  unite(comparison, group1, group2, sep = " vs. ") %>%
+  mutate(comparison = paste("Cluster", comparison, sep = " ")) %>%
+  select(c(class_chemical, comparison, p.adj)) %>%
+  pivot_wider(id_cols = class_chemical, names_from = comparison, values_from = p.adj) %>%
+  left_join(cluster_kruskal_res_cleaned, by = "class_chemical") %>%
+  select(-class_chemical) %>%
+  relocate(c(chemical, class, p.value), .before = "Cluster 1 vs. 2") %>%
+  mutate(across(where(is.numeric), ~ round(.x, digits = 3))) %>%
+  arrange(p.value)
+
+# Write out results
+write.xlsx(chem_cluster_dunn_res_trimmed_clean , "2_OutputTables/Cluster_SS_Chem_KruskalRes_WithDunns.xlsx")
+```
+
+## Significant difference in total chemical burden across social stress clusters
+
+```{r}
+# Min-max scale the chemical data
+wb_log2_minmax <- wb_log2 %>% 
+  filter(S_ID != "1169") %>%
+  column_to_rownames("S_ID") %>%
+  mutate(across(where(is.numeric), \(x) (x-min(x))/(max(x)-min(x)))) %>%
+  mutate(chemsum=rowSums(.)) %>%
+  select(chemsum) %>%
+  rownames_to_column("S_ID") %>%
+  left_join(cluster_k3, by = "S_ID")
+  
+# Run Kruskal-Wallis test
+kruskal.test(x = wb_log2_minmax$chemsum, g = wb_log2_minmax$cluster_k3)
+
+# Run Dunn's test
+dunn_test(wb_log2_minmax, chemsum ~ cluster_k3, p.adjust.method = "BH")
+
+# Make graph
+chem_sum_graph <- ggplot(wb_log2_minmax %>% 
+                           mutate(cluster_k3 = as.character(cluster_k3))
+                           , aes(x = cluster_k3, y = chemsum, color = cluster_k3, shape = cluster_k3)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(size = 2, width = 0.1, height=0.1) +
+  scale_color_manual(values = c("#DDCC77", "#CC6677", "#88CCEE")) +
+  scale_shape_manual(values = c(16, 17, 15)) +
+  theme(legend.position = "none") +
+  labs(y = "Total Chemical Exposure", x = "Cluster") +
+  scale_y_continuous(expand = expansion(mult = c(0.2, 0.5))) +
+   theme(axis.title.x = element_text(margin = ggplot2::margin(t = 10), size = 15),
+         axis.title.y = element_text(margin = ggplot2::margin(r = 10), size = 15),
+         axis.text.x = element_text(size = 13))
+
+pdf("3_OutputFigs/ChemSum_BySSCluster.pdf",
+    width = 3, height = 4)
+chem_sum_graph
+invisible(dev.off())
+
+chem_sum_graph
+```
+
+## Characteristics of Clusters
+
+Are there significant differences in the mean of all social stressor variables (questions) across clusters?
+```{r}
+# Make data frame for stats
+ss_for_kruskal <- ss_data %>%
+  filter(S_ID != "1169") %>%
+  select(-c(cpsq_mean:crs_mean)) %>%
+  mutate(mean_ss = rowMeans(across(where(is.numeric)))) %>%
+  left_join(cluster_k3, by = "S_ID") %>%
+  mutate(cluster_k3 = as.character(cluster_k3))
+
+# Calculate means
+ss_for_kruskal %>% 
+  group_by(cluster_k3) %>%
+  summarise(mean = mean(mean_ss))
+  
+
+# Run tests
+kruskal.test(ss_for_kruskal$mean_ss, ss_for_kruskal$cluster_k3)
+
+dunn_test(ss_for_kruskal, mean_ss ~ cluster_k3, p.adjust.method = "BH")
+```
+
+Are there significant differences in the mean of all social stressor summary variables across clusters?
+```{r}
+# Make data frame for stats
+ss_for_kruskal_summvars <- ss_data %>%
+  filter(S_ID != "1169") %>%
+  select(c(S_ID, hhi_income2needs:crs_mean)) %>%
+  mutate(mean_ss = rowMeans(across(where(is.numeric)))) %>%
+  left_join(cluster_k3, by = "S_ID") %>%
+  mutate(cluster_k3 = as.character(cluster_k3))
+
+# Run tests
+kruskal.test(ss_for_kruskal_summvars$mean_ss, ss_for_kruskal$cluster_k3)
+
+dunn_test(ss_for_kruskal_summvars, mean_ss ~ cluster_k3, p.adjust.method = "BH")
+```
+
+Are there significant differences in specific social stressor summary variables across clusters?
+
+```{r}
+# Prepare data frame
+ss_for_kruskal_summvars_all <- ss_data %>%
+  filter(S_ID != "1169") %>%
+  select(c(S_ID, hhi_income2needs:crs_mean)) %>%
+  left_join(cluster_k3, by = "S_ID") %>%
+  mutate(cluster_k3 = as.character(cluster_k3)) %>%
+  column_to_rownames("S_ID")
+
+# Run Kruskal-Wallis test
+cluster_kruskal_res_summvars <- ss_for_kruskal_summvars_all %>% 
+  pivot_longer(!cluster_k3, names_to = "Variable", values_to = "Value") %>%
+  group_by(Variable) %>%
+  do(tidy(kruskal.test(x = .$Value, g = .$cluster_k3))) %>%
+  dplyr::select(c(Variable, p.value))
+
+cluster_kruskal_res_summvars$padj = p.adjust(cluster_kruskal_res_summvars$p.value, method = "BH")
+
+# Run Dunn's test
+endpoints <- colnames(ss_for_kruskal_summvars_all %>% select(-cluster_k3)) 
+
+dunn_testv <- Vectorize(dunn_test, vectorize.args="formula", SIMPLIFY=F)
+reformulatev <- Vectorize(reformulate, vectorize.args="response")
+
+cluster_dunn_res_summvars <- dunn_testv(ss_for_kruskal_summvars_all, reformulatev("cluster_k3", endpoints), p.adjust.method="BH")
+
+cluster_dunn_res_summvars <- do.call(rbind, cluster_dunn_res_summvars)
+```
+
+Make heatmap of any summary variables with a significant pairwise comparison:
+```{r}
+# Filter for significant variables
+ss_vars_forheatmap <- cluster_dunn_res_summvars %>%
+  filter(p < 0.05) %>%
+  pull(.y.)
+
+# Calculate means of summary variables by cluster
+ss_cluster_forheatmap <- ss_for_kruskal_summvars_all %>%
+  group_by(cluster_k3) %>%
+  summarise(across(everything(), \(x) mean(x))) %>%
+  select(c(cluster_k3, all_of(ss_vars_forheatmap))) %>%
+  column_to_rownames("cluster_k3") %>%
+  as.matrix()
+
+# Make heatmap key and colors
+ss_heatmap_key <- ss_cluster_forheatmap %>%
+  t() %>% as.data.frame() %>%
+  rownames_to_column("variable") %>%
+  separate(variable, into = c("Index", "variable1", "variable2"), remove = FALSE) %>%
+  column_to_rownames("variable") %>%
+  select(Index) %>%
+  mutate(Index = toupper(Index))
+  
+ss_colors = list("Index" = c("BSI" = "#88CCEE", "CTS" = "#CC6677", "ESQ" = "#DDCC77", "CPSQ" = "#44AA99", "RACD" = "#999933", "CRS" = "#117733", "PSI" = "#661100"))
+
+ss_cluster_heatmap <- pheatmap(ss_cluster_forheatmap,
+         annotation_col = ss_heatmap_key,
+         annotation_colors = ss_colors,
+         annotation_names_col = FALSE,
+         cutree_cols = 3,
+         show_colnames = FALSE,
+         show_rownames = FALSE,
+         cluster_rows = FALSE,
+         scale = 'column',
+         border_color = "black",
+         treeheight_col = 30,
+         cellwidth = 10,
+         cellheight = 40,
+         color = colorRampPalette(c("#FDE0C5", "#F59E72", "#EB4A40"))(50))
+
+pdf("3_OutputFigs/SS_Cluster_Heatmap.pdf", 
+    width = 10, height = 5)
+ss_cluster_heatmap
+invisible(dev.off())
+
+ss_cluster_heatmap
+```
+
+Heatmap with individual level variables for the supplement:
+```{r}
+# Prepare data frame for heatmap
+ss_indiv_for_heatmap <- ss_for_kruskal %>%
+  column_to_rownames("S_ID") %>%
+  arrange(cluster_k3) %>%
+  select(-cluster_k3) %>%
+  select(all_of(names(ss_data_indiv_sc))) %>%
+  as.matrix()
+
+# Add an index value into the dataframe so we can add splits between groups in heatmap
+cluster_k3 <- cluster_k3 %>%
+  arrange(cluster_k3) 
+
+cluster_k3$index <- 1:nrow(cluster_k3)
+
+# Make lists of where breaks should be placed in the heatmap to separate clusters of samples
+seprows <- cluster_k3 %>% group_by(cluster_k3) %>% slice_max(n = 1, order_by = index)
+seprows <- sort(seprows$index)
+
+# Prepare annotation data frames 
+cluster_anno <- ss_for_kruskal %>%
+  select(c(S_ID, cluster_k3)) %>%
+  column_to_rownames("S_ID") %>%
+  rename("Cluster" = "cluster_k3")
+
+variable_anno <- ss_indiv_for_heatmap %>%
+  t() %>% as.data.frame() %>%
+  rownames_to_column("variable") %>%
+  separate(variable, into = c("Index", "variable1", "variable2"), remove = FALSE) %>%
+  column_to_rownames("variable") %>%
+  select(Index) %>%
+  mutate(Index = toupper(Index)) %>%
+  mutate(Index = gsub("[[:digit:]]", "", Index)) %>%
+  mutate(Index = gsub("R$", "", Index)) %>%
+  mutate(Index = gsub("A$", "", Index)) %>%
+  mutate(Index = gsub("B$", "", Index)) %>%
+  mutate(Index = gsub("C$", "", Index))
+
+# Prepare color key
+colors_indiv = list("Index" = c("BSI" = "#88CCEE", "CTS" = "#CC6677", "ESQ" = "#DDCC77", "CPSQ" = "#44AA99", 
+                                "HHI" = "#882255", "RACD" = "#999933", "CRS" = "#117733", "PSI" = "#661100"),
+                    "Cluster" = c("1" = "#DDCC77", "2" = "#CC6677", "3" = "#88CCEE"))
+
+
+
+# Make heatmap
+ss_cluster_heatmap_indiv <- pheatmap(ss_indiv_for_heatmap,
+         annotation_col = variable_anno,
+         annotation_row = cluster_anno,
+         annotation_colors = colors_indiv,
+         annotation_names_col = FALSE,
+         annotation_names_row = FALSE,
+         cluster_rows = FALSE,
+         show_colnames = FALSE,
+         show_rownames = FALSE,
+         scale = 'column',
+         border_color = "black",
+         gaps_row = seprows,
+         color = colorRampPalette(c("#FDE0C5", "#F59E72", "#EB4A40"))(50))
+
+pdf("3_OutputFigs/SS_Cluster_Heatmap_Indiv.pdf", 
+    width = 10, height = 5)
+ss_cluster_heatmap_indiv
+invisible(dev.off())
+
+ss_cluster_heatmap_indiv
+```
+
+Demographic differences between clusters:
+```{r}
+# Merge data
+chem_demo_fortable <- left_join(chem_demo, cluster_k3, by = "S_ID") %>%
+  filter(S_ID != "1169") %>%
+  mutate(race_forstats = case_when(pc_race_cleaned == "White" ~ "White",
+                                   .default = "Non-White"))
+
+# Create function for custom table so that Mean (SD) is shown for continuous variables
+my.render.cont <- function(x) {
+  with(stats.apply.rounding(stats.default(x), digits=2), c("",
+                                                           "Mean (SD)"=sprintf("%s (&plusmn; %s)", MEAN, SD)))
+}
+
+# Make table
+table1(~ mat_age_birth + race_forstats + pc_latino_hispanic + pc_ed | cluster_k3, 
+       data = chem_demo_fortable, 
+       render.continuous = my.render.cont)
+
+# Run Fisher Test
+fisher.test(table(chem_demo_fortable$race_forstats, chem_demo_fortable$cluster_k3))
+```
+
+```{r}
+# Merge data
+chem_demo_fortable <- left_join(chem_demo, cluster_k3, by = "S_ID") %>%
+  filter(S_ID != "1169")
+
+# Create function for custom table so that Mean (SD) is shown for continuous variables
+my.render.cont <- function(x) {
+  with(stats.apply.rounding(stats.default(x), digits=2), c("",
+                                                           "Mean (SD)"=sprintf("%s (&plusmn; %s)", MEAN, SD)))
+}
+
+# Make table
+table1(~ mat_age_birth + pc_race_cleaned + pc_latino_hispanic + pc_ed | cluster_k3, 
+       data = chem_demo_fortable, 
+       render.continuous = my.render.cont)
+
+# Run Fisher Test
+fisher.test(table(chem_demo_fortable$pc_race_cleaned, chem_demo_fortable$cluster_k3))
 ```
 
