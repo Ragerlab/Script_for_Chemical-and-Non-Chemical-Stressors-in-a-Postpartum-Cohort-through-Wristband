@@ -38,12 +38,14 @@ library(rcartocolor) # for colors
 library(viridis) # for colors
 library(corrplot) # for correlation analysis
 select <- dplyr::select
+recode <- dplyr::recode
+rename <- dplyr::rename 
 
 # Set theme
 theme_set(theme_bw())
 
 # Set working directory
-setwd("/Users/ehickman/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects/2023/BEE_Wristband_Project/4_Analyses/1_CurrentAnalyses/2_ChemicalPatternAnalysis")
+setwd("~/Library/CloudStorage/OneDrive-UniversityofNorthCarolinaatChapelHill/Rager_Lab/Projects_Lead/5_BEEWristband_Postpartum_ChemSS/4_Analyses/1_CurrentAnalyses/2_ChemicalPatternAnalysis")
 ```
 
 # Import data 
@@ -123,8 +125,8 @@ funct_summary <- ggplot(chem_funct_anno_summary_cleaned, aes(x = reorder(functio
   scale_fill_gradient(low = "gray85", high = "gray40") +
   theme(axis.ticks.x = element_blank(),
         axis.text.x = element_text(size = 12, angle = 45, hjust = 1),
-        axis.title.x = element_text(size = 14, margin = margin(t = 10, r = 0, b = 0, l = 0)),
-        axis.title.y = element_text(size = 14, margin = margin(t = 0, r = 10, b = 0, l = 0)),
+        axis.title.x = element_text(size = 14, margin = ggplot2::margin(t = 10, r = 0, b = 0, l = 0)),
+        axis.title.y = element_text(size = 14, margin = ggplot2::margin(t = 0, r = 10, b = 0, l = 0)),
         plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
         axis.text = element_text(color = "black"),
         panel.grid.minor = element_blank(),
@@ -142,11 +144,18 @@ funct_summary
 
 Make a heatmap of functional use categories:
 ```{r}
+# Import chemical detection percentage data
+det_perc <- read.xlsx("1_InputData/SummaryStats_ByChemical.xlsx")
+
 hm_chemical_key_funct <- chemical_key %>% 
   remove_rownames() %>% 
+  left_join(det_perc %>% select(c("chemical_abbreviation", "perc_detected")), join_by("chemical" == "chemical_abbreviation")) %>%
   column_to_rownames("chemical") %>%
-  select(class) %>% 
-  rename("Chemical Class" = "class")
+  select(class, perc_detected) %>% 
+  mutate(perc_detected = as.numeric(perc_detected)) %>%
+  rename("Chemical Class" = "class", "% Detected" = "perc_detected")
+
+colorRampPalette(c("gray90", "grey21"))(5)
 
 heatmap_chemical_class_colors_funct = list("Chemical Class" = c(BDE = "#88CCEE",
                                                BFR = "#CC6677",
@@ -155,7 +164,8 @@ heatmap_chemical_class_colors_funct = list("Chemical Class" = c(BDE = "#88CCEE",
                                                PCB = "#332288",
                                                Pest = "#AA4499",
                                                Phthal = "#44AA99",
-                                               alkylOPE = "#999933"))
+                                               alkylOPE = "#999933"),
+                                           "% Detected" = c("seashell", "coral3"))
 
 # Names of functional use categories with 5 or more chemicals present
 cats_to_keep <- chem_funct_anno_summary %>%
